@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
@@ -30,15 +30,23 @@ def force_bias_kernel_r(
 
 
 def energy_kernel_r(
-    walker: jax.Array, ham_data: HamChol, meas_ctx: RhfMeasCtx, trial_data: RhfTrial
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: RhfMeasCtx,
+    trial_data: RhfTrial,
+    nchol: Optional[int] = None,
 ) -> jax.Array:
+    if nchol is None:
+        nchol = ham_data.chol.shape[0]
     m = trial_data.mo_coeff.conj().T @ walker
     g_half = _half_green_from_overlap_matrix(walker, m)  # (nocc, norb)
 
     e0 = ham_data.h0
     e1 = 2.0 * jnp.sum(g_half * meas_ctx.rot_h1)
 
-    f = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol, g_half.T, optimize="optimal")
+    f = jnp.einsum(
+        "gij,jk->gik", meas_ctx.rot_chol[:nchol], g_half.T, optimize="optimal"
+    )
     c = jax.vmap(jnp.trace)(f)
     exc = jnp.sum(jax.vmap(lambda x: x * x.T)(f))
     e2 = 2.0 * jnp.sum(c * c) - exc
