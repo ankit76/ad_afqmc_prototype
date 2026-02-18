@@ -8,9 +8,15 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*.swx
 
 # Output files
 runs/
+
+# Build / packaging
+build/
 
 # OS
 .DS_Store

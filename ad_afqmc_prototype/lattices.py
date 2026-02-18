@@ -93,6 +93,11 @@ class OneDimensionalChain(Lattice):
             ]
         )
 
+    def get_all_neighboring_bonds(self, adjacency_matrix):
+        # k = 1 excludes diagonal.
+        i, j = np.where(np.triu(adjacency_matrix, k=1) != 0)
+        return np.column_stack((i, j))
+
     # ordering is used in the ssh model
     @partial(jit, static_argnums=(0,))
     def get_nearest_neighbors(self, pos):

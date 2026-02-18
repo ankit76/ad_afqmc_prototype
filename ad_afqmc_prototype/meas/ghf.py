@@ -11,6 +11,7 @@ from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
 from ..ham.chol import HamChol
 from ..ham.hubbard import HamHubbard
+from ..ham.hubbard_nn import HamHubbardNN
 from ..trial.ghf import (
     GhfTrial,
     calc_green_g,
@@ -277,7 +278,7 @@ def energy_kernel_hubbard_g(
 
 def make_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
     """
-    GHF measurement ops for hubbard hamiltonian
+    GHF measurement ops for Hubbard Hamiltonian
     """
     wk = sys.walker_kind.lower()
 
@@ -294,5 +295,86 @@ def make_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
         )
 
     raise ValueError(
-        f"hubbard GHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+        f"Hubbard GHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+    )
+
+
+# ---------------------
+# hubbard_nn
+# ---------------------
+
+
+def _energy_from_full_green_nn(G: jax.Array, ham_data: HamHubbardNN, norb: int) -> jax.Array:
+    h1 = ham_data.h1
+    u = ham_data.u
+    v = ham_data.v
+    bonds = ham_data.bonds
+
+    g_uu = G[:norb, :norb]
+    g_dd = G[norb:, norb:]
+    g_ud = G[:norb, norb:]
+    g_du = G[norb:, :norb]
+    
+    e1 = jnp.sum(g_uu * h1) + jnp.sum(g_dd * h1)
+
+    # on-site interactions
+    e2 = u * (jnp.sum(jnp.diagonal(g_uu) * jnp.diagonal(g_dd)) 
+              - jnp.sum(jnp.diagonal(g_ud) * jnp.diagonal(g_du)))
+
+    # nearest-neighbor interacions
+    i = bonds[:, 0] 
+    j = bonds[:, 1] 
+    g_charge = jnp.diagonal(g_uu) + jnp.diagonal(g_dd)
+    hartree = g_charge[i] * g_charge[j]
+    exchange = (
+            g_uu[i, j] * g_uu[j, i] + g_ud[i, j] * g_du[j, i]
+            + g_du[i, j] * g_ud[j, i] + g_dd[i, j] * g_dd[j, i]
+    )
+    e2 += v * jnp.sum(hartree - exchange)
+
+    return e1 + e2
+
+
+def energy_kernel_hubbard_nn_u(
+    walker: tuple[jax.Array, jax.Array],
+    ham_data: HamHubbardNN,
+    meas_ctx: Any,
+    trial_data: GhfTrial,
+) -> jax.Array:
+    g = calc_green_u(walker, trial_data)
+    norb = trial_data.norb
+    return _energy_from_full_green_nn(g, ham_data, norb)
+
+
+def energy_kernel_hubbard_nn_g(
+    walker: jax.Array,
+    ham_data: HamHubbardNN,
+    meas_ctx: Any,
+    trial_data: GhfTrial,
+) -> jax.Array:
+    g = calc_green_g(walker, trial_data)
+    norb = trial_data.norb
+    return _energy_from_full_green_nn(g, ham_data, norb)
+
+
+def make_ghf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
+    """
+    GHF measurement ops for Nearest-neighbor Hubbard Hamiltonian
+    """
+    wk = sys.walker_kind.lower()
+
+    if wk == "unrestricted":
+        return MeasOps(
+            overlap=overlap_u,
+            kernels={k_energy: energy_kernel_hubbard_nn_u},
+        )
+
+    if wk == "generalized":
+        return MeasOps(
+            overlap=overlap_g,
+            kernels={k_energy: energy_kernel_hubbard_nn_g},
+        )
+
+    raise ValueError(
+        f"Nearest-neighbor Hubbard GHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
     )
