@@ -71,7 +71,7 @@ def _green_half_g(w: jax.Array, trial_data: GhfTrial) -> jax.Array:
 @dataclass(frozen=True)
 class GhfCholMeasCtx:
     """
-    Half-rotated intermediates for GHF estimators with cholesky hamiltonian.
+    Half-rotated intermediates for GHF estimators with Cholesky Hamiltonian.
 
     rot_h1: (ne, ns) where ns = 2*norb
     rot_chol: (nchol, ne, ns)

@@ -14,14 +14,14 @@ from ad_afqmc_prototype import testing
 from ad_afqmc_prototype.afqmc import AFQMC
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.meas.uhf import (
-    build_meas_ctx,
+    build_meas_ctx_chol,
     energy_kernel_gw_rh,
     energy_kernel_rw_rh,
     energy_kernel_uw_rh,
     force_bias_kernel_gw_rh,
     force_bias_kernel_rw_rh,
     force_bias_kernel_uw_rh,
-    make_uhf_meas_ops,
+    make_uhf_meas_ops_chol,
 )
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
@@ -67,7 +67,7 @@ def test_auto_force_bias_matches_manual_uhf(walker_kind, norb, nup, ndn, n_chol)
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        make_meas_ops_fn=make_uhf_meas_ops,
+        make_meas_ops_fn=make_uhf_meas_ops_chol,
     )
 
     fb_manual = meas_manual.require_kernel(k_force_bias)
@@ -114,7 +114,7 @@ def test_auto_energy_matches_manual_uhf(walker_kind, norb, nup, ndn, n_chol):
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        make_meas_ops_fn=make_uhf_meas_ops,
+        make_meas_ops_fn=make_uhf_meas_ops_chol,
     )
 
     e_manual = meas_manual.require_kernel(k_energy)
@@ -155,7 +155,7 @@ def test_force_bias_equal_when_wu_eq_wr():
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        build_meas_ctx_fn=build_meas_ctx,
+        build_meas_ctx_fn=build_meas_ctx_chol,
     )
 
     for i in range(4):
@@ -194,7 +194,7 @@ def test_force_bias_equal_when_wg_eq_wu():
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        build_meas_ctx_fn=build_meas_ctx,
+        build_meas_ctx_fn=build_meas_ctx_chol,
     )
 
     for i in range(4):
@@ -237,7 +237,7 @@ def test_energy_equal_when_wu_eq_wr():
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        build_meas_ctx_fn=build_meas_ctx,
+        build_meas_ctx_fn=build_meas_ctx_chol,
     )
 
     for i in range(4):
@@ -276,7 +276,7 @@ def test_energy_equal_when_wg_eq_wu():
             ndn=ndn,
         ),
         make_trial_ops_fn=make_uhf_trial_ops,
-        build_meas_ctx_fn=build_meas_ctx,
+        build_meas_ctx_fn=build_meas_ctx_chol,
     )
 
     for i in range(4):

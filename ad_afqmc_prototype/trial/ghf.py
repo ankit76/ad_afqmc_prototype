@@ -16,15 +16,14 @@ class GhfTrial:
     """
     Generalized HF trial.
     """
-
-    mo_coeff: jax.Array  # (2*norb, nelec_total)
+    mo_coeff: jax.Array  # (2*norb, nocc)
 
     @property
     def norb(self) -> int:
         return int(self.mo_coeff.shape[0] // 2)
 
     @property
-    def nelec_total(self) -> int:
+    def nocc(self) -> int:
         return int(self.mo_coeff.shape[1])
 
     def tree_flatten(self):
@@ -40,23 +39,23 @@ def _det(m: jax.Array) -> jax.Array:
     return jnp.linalg.det(m)
 
 
-def get_rdm1_block_diag(trial_data: GhfTrial) -> jax.Array:
+def get_rdm1_u(trial_data: GhfTrial) -> jax.Array:
     """
     Return spin-block 1RDM for use by AFQMC propagator code that expects
     (2, norb, norb) for restricted basis Hamiltonians.
 
     Note: This discards spin offdiagonal blocks in a true GHF density matrix.
-    See get_rdm1_generalized for the full 1RDM matrix.
+    See get_rdm1_g for the full 1RDM matrix.
     """
     c = trial_data.mo_coeff
     dm = c @ c.conj().T  # (2*norb, 2*norb)
     norb = trial_data.norb
-    dm_up = dm[:norb, :norb]
-    dm_dn = dm[norb:, norb:]
-    return jnp.stack([dm_up, dm_dn], axis=0)  # (2, norb, norb)
+    dm_u = dm[:norb, :norb]
+    dm_d = dm[norb:, norb:]
+    return jnp.stack([dm_u, dm_d], axis=0)  # (2, norb, norb)
 
 
-def get_rdm1_generalized(trial_data: GhfTrial) -> jax.Array:
+def get_rdm1_g(trial_data: GhfTrial) -> jax.Array:
     """
     Full (2*norb, 2*norb) 1RDM.
     """
@@ -163,17 +162,17 @@ def calc_green_u(
     Compute full G for unrestricted walker
     """
     wu, wd = walker
-    C = trial_data.mo_coeff  # (2*norb, nelec_tot)
     norb = wu.shape[0]
     nup = wu.shape[1]
-    Cu = C[:norb, :]  # (norb, nelec_tot)
-    Cd = C[norb:, :]  # (norb, nelec_tot)
-    O_left = Cu.conj().T @ wu  # (nelec_tot, nup)
-    O_right = Cd.conj().T @ wd  # (nelec_tot, ndn)
-    O = jnp.concatenate([O_left, O_right], axis=1)
-    X = jnp.linalg.solve(O, C.conj().T)  # (nelec_tot, 2*norb)
-    top = wu @ X[:nup, :]  # (norb, 2*norb)
-    bot = wd @ X[nup:, :]  # (norb, 2*norb)
+    c = trial_data.mo_coeff  # (2*norb, nocc)
+    cu = c[:norb, :]  # (norb, nocc)
+    cd = c[norb:, :]  # (norb, nocc)
+    o_left = cu.conj().T @ wu  # (nocc, nup)
+    o_right = cd.conj().T @ wd  # (nocc, ndn)
+    o = jnp.concatenate([o_left, o_right], axis=1)
+    x = jnp.linalg.solve(o, c.conj().T)  # (nocc, 2*norb)
+    top = wu @ x[:nup, :]  # (norb, 2*norb)
+    bot = wd @ x[nup:, :]  # (norb, 2*norb)
     G = jnp.concatenate([top, bot], axis=0).T  # (2*norb, 2*norb)
     return G
 
@@ -182,10 +181,10 @@ def calc_green_g(walker: jax.Array, trial_data: GhfTrial) -> jax.Array:
     """
     Compute full G for generalized walker
     """
-    C = trial_data.mo_coeff  # (2*norb, nelec_tot)
-    overlap_mat = C.conj().T @ walker  # (nelec_tot, nelec_tot)
-    inv = jnp.linalg.inv(overlap_mat)
-    G = (walker @ inv @ C.conj().T).T  # (2*norb, 2*norb)
+    c = trial_data.mo_coeff  # (2*norb, nocc)
+    o = c.conj().T @ walker  # (nocc, nocc)
+    x = jnp.linalg.solve(o, c.conj().T)  # (nocc, 2*norb)
+    G = (walker @ x).T  # (2*norb, 2*norb)
     return G
 
 
@@ -225,12 +224,15 @@ def make_ghf_trial_ops(sys: System) -> TrialOps:
     if wk == "restricted":
         if sys.nup != sys.ndn:
             raise ValueError("restricted walkers require nup == ndn.")
-        return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1_block_diag)
+        return TrialOps(
+            overlap=overlap_r, 
+            get_rdm1=get_rdm1_u
+        )
 
     if wk == "unrestricted":
         return TrialOps(
             overlap=overlap_u,
-            get_rdm1=get_rdm1_block_diag,
+            get_rdm1=get_rdm1_u,
             calc_green=calc_green_u,
             update_green=update_green,
             calc_overlap_ratio=calc_overlap_ratio,
@@ -239,7 +241,7 @@ def make_ghf_trial_ops(sys: System) -> TrialOps:
     if wk == "generalized":
         return TrialOps(
             overlap=overlap_g,
-            get_rdm1=get_rdm1_generalized,
+            get_rdm1=get_rdm1_g,
             calc_green=calc_green_g,
             update_green=update_green,
             calc_overlap_ratio=calc_overlap_ratio,

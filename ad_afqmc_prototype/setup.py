@@ -98,7 +98,7 @@ def _make_trial_bundle(sys: System, staged: StagedInputs, mixed_precision: bool)
         return trial_data, trial_ops, meas_ops
 
     if kind == "uhf":
-        from .meas.uhf import make_uhf_meas_ops
+        from .meas.uhf import make_uhf_meas_ops_chol
         from .trial.uhf import UhfTrial, make_uhf_trial_ops
 
         if "mo_a" in data and "mo_b" in data:
@@ -109,7 +109,7 @@ def _make_trial_bundle(sys: System, staged: StagedInputs, mixed_precision: bool)
             mo_b = jnp.asarray(data["mo"])[:, : sys.ndn]
         trial_data = UhfTrial(mo_a, mo_b)
         trial_ops = make_uhf_trial_ops(sys=sys)
-        meas_ops = make_uhf_meas_ops(sys=sys)
+        meas_ops = make_uhf_meas_ops_chol(sys=sys)
         return trial_data, trial_ops, meas_ops
 
     if kind == "ghf":

@@ -37,7 +37,7 @@ class MultiGhfTrial:
         return int(self.mo_coeffs.shape[1] // 2)
 
     @property
-    def nelec_total(self) -> int:
+    def nocc(self) -> int:
         return int(self.mo_coeffs.shape[2])
 
     def tree_flatten(self):
@@ -75,13 +75,13 @@ def get_rdm1(trial_data: MultiGhfTrial) -> jax.Array:
     ci = trial_data.ci_coeffs
     mo = trial_data.mo_coeffs
     k0 = jnp.argmax(jnp.abs(ci))
-    C = mo[k0]  # (2n, ne)
+    c = mo[k0]  # (2n, ne)
 
-    dm = C @ C.conj().T  # (2n,2n)
+    dm = c @ c.conj().T  # (2n,2n)
     norb = trial_data.norb
-    dm_up = dm[:norb, :norb]
-    dm_dn = dm[norb:, norb:]
-    return jnp.stack([dm_up, dm_dn], axis=0)
+    dm_u = dm[:norb, :norb]
+    dm_d = dm[norb:, norb:]
+    return jnp.stack([dm_u, dm_d], axis=0)
 
 
 def overlap_u(
@@ -96,16 +96,16 @@ def overlap_u(
 
     norb = wu.shape[0]
 
-    def per_det(Ck: jax.Array, ck: jax.Array) -> jax.Array:
-        Cu = Ck[:norb, :]  # (n,ne)
-        Cd = Ck[norb:, :]  # (n,ne)
+    def per_det(ck: jax.Array, coeff_k: jax.Array) -> jax.Array:
+        cu = ck[:norb, :]  # (n,ne)
+        cd = ck[norb:, :]  # (n,ne)
 
-        O_left = Cu.conj().T @ wu  # (ne,nup)
-        O_right = Cd.conj().T @ wd  # (ne,ndn)
-        O = jnp.concatenate([O_left, O_right], axis=1)  # (ne,ne)
+        o_left = cu.conj().T @ wu  # (ne,nup)
+        o_right = cd.conj().T @ wd  # (ne,ndn)
+        o = jnp.concatenate([o_left, o_right], axis=1)  # (ne,ne)
 
-        Ok = _det_stable(O)
-        return ck * Ok
+        ok = _det_stable(o)
+        return coeff_k * ok
 
     contrib = jax.vmap(per_det, in_axes=(0, 0))(mo, ci)
     return jnp.sum(contrib)
@@ -118,10 +118,10 @@ def overlap_g(walker: jax.Array, trial_data: MultiGhfTrial) -> jax.Array:
     ci = trial_data.ci_coeffs
     mo = trial_data.mo_coeffs  # (nd,2n,ne)
 
-    def per_det(Ck: jax.Array, ck: jax.Array) -> jax.Array:
-        O = Ck.conj().T @ walker  # (ne,ne)
-        Ok = _det_stable(O)
-        return ck * Ok
+    def per_det(ck: jax.Array, coeff_k: jax.Array) -> jax.Array:
+        o = ck.conj().T @ walker  # (ne,ne)
+        ok = _det_stable(o)
+        return coeff_k * ok
 
     contrib = jax.vmap(per_det, in_axes=(0, 0))(mo, ci)
     return jnp.sum(contrib)
@@ -142,22 +142,21 @@ def calc_green_u(
     wu_r = wu.astype(trial_data.green_real_dtype)
     wd_r = wd.astype(trial_data.green_real_dtype)
 
-    def per_det(Ck: jax.Array, ck: jax.Array):
-        Cu = Ck[:norb, :]
-        Cd = Ck[norb:, :]
+    def per_det(ck: jax.Array, coeff_k: jax.Array):
+        cu = ck[:norb, :]
+        cd = ck[norb:, :]
 
-        O_left = Cu.conj().T @ wu_r
-        O_right = Cd.conj().T @ wd_r
-        O = jnp.concatenate([O_left, O_right], axis=1)  # (ne,ne)
+        o_left = cu.conj().T @ wu_r
+        o_right = cd.conj().T @ wd_r
+        o = jnp.concatenate([o_left, o_right], axis=1)  # (ne,ne)
+        x = jnp.linalg.solve(o, ck.conj().T)  # (ne,2n)
 
-        X = jnp.linalg.solve(O, Ck.conj().T)  # (ne,2n)
-
-        top = wu_r @ X[:nup, :]  # (n,2n)
-        bot = wd_r @ X[nup:, :]  # (n,2n)
+        top = wu_r @ x[:nup, :]  # (n,2n)
+        bot = wd_r @ x[nup:, :]  # (n,2n)
         Gk = jnp.concatenate([top, bot], axis=0).T  # (2n,2n)
 
-        Ok = _det_stable(O)
-        wk = ck * Ok
+        ok = _det_stable(o)
+        wk = coeff_k * ok
         return Gk, wk
 
     Gk, wk = jax.vmap(per_det, in_axes=(0, 0))(mo, ci)
@@ -168,15 +167,15 @@ def calc_green_g(walker: jax.Array, trial_data: MultiGhfTrial) -> dict[str, jax.
     ci = trial_data.ci_coeffs.astype(trial_data.green_complex_dtype)
     mo = trial_data.mo_coeffs.astype(trial_data.green_complex_dtype)
 
-    W = walker.astype(trial_data.green_real_dtype)
+    w = walker.astype(trial_data.green_real_dtype)
 
-    def per_det(Ck: jax.Array, ck: jax.Array):
-        O = Ck.conj().T @ W  # (ne,ne)
-        X = jnp.linalg.solve(O, Ck.conj().T)  # (ne,2n)
-        Gk = (W @ X).T  # (2n,2n)
+    def per_det(ck: jax.Array, coeff_k: jax.Array):
+        o = ck.conj().T @ w  # (ne,ne)
+        x = jnp.linalg.solve(o, ck.conj().T)  # (ne,2n)
+        Gk = (w @ x).T  # (2n,2n)
 
-        Ok = _det_stable(O)
-        wk = ck * Ok
+        ok = _det_stable(o)
+        wk = coeff_k * ok
         return Gk, wk
 
     Gk, wk = jax.vmap(per_det, in_axes=(0, 0))(mo, ci)
@@ -204,10 +203,10 @@ def calc_overlap_ratio(
         G_states
     )
 
-    W_old = jnp.sum(w_states)
-    W_new = jnp.sum(w_states * r_k)
+    w_old = jnp.sum(w_states)
+    w_new = jnp.sum(w_states * r_k)
 
-    ratio = jnp.where(jnp.abs(W_old) < 1.0e-16, 0.0 + 0.0j, W_new / W_old)
+    ratio = jnp.where(jnp.abs(w_old) < 1.0e-16, 0.0 + 0.0j, w_new / w_old)
     return jnp.real(ratio)
 
 
@@ -293,7 +292,7 @@ def _compress_unique_pg_dets(
 ) -> tuple[jax.Array, jax.Array]:
     """
     Given PG-rotated determinants and characters, combine duplicates:
-      - duplicates detected via det(Cref^H Ck)
+      - duplicates detected via det(cref^H ck)
       - coefficients accumulated with phase detS.
     """
     mo_np = np.asarray(mo_rotated)
@@ -302,15 +301,15 @@ def _compress_unique_pg_dets(
     unique_mos: list[np.ndarray] = []
     unique_coeffs: list[np.complex128] = []
 
-    for Ck, chi_k in zip(mo_np, np.conj(ch_np)):
+    for ck, chi_k in zip(mo_np, np.conj(ch_np)):
         if not unique_mos:
-            unique_mos.append(Ck)
+            unique_mos.append(ck)
             unique_coeffs.append(chi_k)
             continue
 
         matched = False
-        for m, Cref in enumerate(unique_mos):
-            S = Cref.conj().T @ Ck
+        for m, cref in enumerate(unique_mos):
+            S = cref.conj().T @ ck
             detS = np.linalg.det(S)
             if abs(abs(detS) - 1.0) < tol_same:
                 unique_coeffs[m] += chi_k * detS
@@ -318,7 +317,7 @@ def _compress_unique_pg_dets(
                 break
 
         if not matched:
-            unique_mos.append(Ck)
+            unique_mos.append(ck)
             unique_coeffs.append(chi_k)
 
     mo_u = jnp.asarray(np.stack(unique_mos, axis=0))
@@ -361,11 +360,11 @@ def _rotate_spin_trial(
     phase_up = jnp.exp(+0.5j * alpha)
     phase_dn = jnp.exp(-0.5j * alpha)
 
-    C_up = phase_up * mo[:norb, :]
-    C_dn = phase_dn * mo[norb:, :]
+    cu = phase_up * mo[:norb, :]
+    cd = phase_dn * mo[norb:, :]
 
-    a = c * C_up + s * C_dn
-    b = -s * C_up + c * C_dn
+    a = c * cu + s * cd
+    b = -s * cu + c * cd
     return jnp.concatenate([a, b], axis=0)
 
 
