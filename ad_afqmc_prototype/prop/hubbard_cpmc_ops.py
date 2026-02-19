@@ -67,12 +67,26 @@ def _apply_one_body_half_unrestricted(
     """
     Apply one body half step to a batch of unrestricted Hubbard walkers.
 
-    walkers is expected to be a tuple/list (w_up, w_dn), each with shape (nw, n, ne_sigma).
+    walkers is expected to be a tuple/list (wu, wd), each with shape (nw, n, ne_sigma).
     """
-    w_up, w_dn = walker
-    w_up = prop_ctx.exp_h1_half @ w_up
-    w_dn = prop_ctx.exp_h1_half @ w_dn
-    return (w_up, w_dn)
+    wu, wd = walker
+    wu = prop_ctx.exp_h1_half @ wu
+    wd = prop_ctx.exp_h1_half @ wd
+    return (wu, wd)
+
+
+def _apply_one_body_half_generalized(
+    walker: jax.Array, prop_ctx: HubbardCpmcCtx
+) -> tuple[jax.Array, jax.Array]:
+    """
+    Apply one body half step to a batch of unrestricted Hubbard walkers.
+
+    walkers is expected to be a tuple/list (wu, wd), each with shape (nw, n, ne_sigma).
+    """
+    norb = walker.shape[0] // 2
+    top = prop_ctx.exp_h1_half @ walker[:norb, :]
+    bot = prop_ctx.exp_h1_half @ walker[norb:, :]
+    return jnp.vstack([top, bot])
 
 
 def _build_prop_ctx(ham_data: HamHubbard, dt: float) -> HubbardCpmcCtx:
@@ -84,15 +98,24 @@ def _build_prop_ctx(ham_data: HamHubbard, dt: float) -> HubbardCpmcCtx:
 
 
 def make_hubbard_cpmc_ops(ham_data: HamHubbard, walker_kind: str) -> HubbardCpmcOps:
-    assert (
-        walker_kind.lower() == "unrestricted"
-    ), "only unrestricted walkers supported for hubbard_cpmc_ops"
-    n = int(ham_data.h1.shape[-1])
+    assert type(walker_kind) == str
 
+    walker_kind = walker_kind.lower()
+
+    if walker_kind not in ("unrestricted", "generalized"):
+        raise ValueError(f"unknown walker_kind: {walker_kind}")
+    
     def n_sites() -> int:
-        return n
+        return int(ham_data.h1.shape[-1])
 
-    return HubbardCpmcOps(
-        n_sites=n_sites,
-        apply_one_body_half=_apply_one_body_half_unrestricted,
-    )
+    if walker_kind == "unrestricted":
+        return HubbardCpmcOps(
+            n_sites=n_sites,
+            apply_one_body_half=_apply_one_body_half_unrestricted,
+        )
+
+    elif walker_kind == "generalized":
+        return HubbardCpmcOps(
+            n_sites=n_sites,
+            apply_one_body_half=_apply_one_body_half_generalized,
+        )

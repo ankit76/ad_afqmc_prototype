@@ -23,7 +23,7 @@ from .ghf import _energy_from_full_green, _energy_from_full_green_nn
 # ---------------------
 
 
-def energy_kernel_hubbard_u(
+def energy_kernel_uw_hubbard(
     walker: tuple[jax.Array, jax.Array],
     ham_data: HamHubbard,
     meas_ctx: Any,
@@ -48,7 +48,7 @@ def energy_kernel_hubbard_u(
     return jnp.real(E)
 
 
-def energy_kernel_hubbard_g(
+def energy_kernel_gw_hubbard(
     walker: jax.Array,
     ham_data: HamHubbard,
     meas_ctx: Any,
@@ -84,7 +84,7 @@ def make_multi_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
 
         return MeasOps(
             overlap=real_overlap_u,
-            kernels={k_energy: energy_kernel_hubbard_u},
+            kernels={k_energy: energy_kernel_uw_hubbard},
         )
 
     if wk == "generalized":
@@ -95,7 +95,7 @@ def make_multi_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
 
         return MeasOps(
             overlap=real_overlap_g,
-            kernels={k_energy: energy_kernel_hubbard_g},
+            kernels={k_energy: energy_kernel_gw_hubbard},
         )
 
     raise ValueError(
@@ -108,7 +108,7 @@ def make_multi_ghf_meas_ops_hubbard(sys: System) -> MeasOps:
 # ---------------------
 
 
-def energy_kernel_hubbard_nn_u(
+def energy_kernel_uw_hubbard_nn(
     walker: tuple[jax.Array, jax.Array],
     ham_data: HamHubbardNN,
     meas_ctx: Any,
@@ -133,7 +133,7 @@ def energy_kernel_hubbard_nn_u(
     return jnp.real(E)
 
 
-def energy_kernel_hubbard_nn_g(
+def energy_kernel_gw_hubbard_nn(
     walker: jax.Array,
     ham_data: HamHubbardNN,
     meas_ctx: Any,
@@ -169,7 +169,7 @@ def make_multi_ghf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
 
         return MeasOps(
             overlap=real_overlap_u,
-            kernels={k_energy: energy_kernel_hubbard_nn_u},
+            kernels={k_energy: energy_kernel_uw_hubbard_nn},
         )
 
     if wk == "generalized":
@@ -180,7 +180,7 @@ def make_multi_ghf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
 
         return MeasOps(
             overlap=real_overlap_g,
-            kernels={k_energy: energy_kernel_hubbard_nn_g},
+            kernels={k_energy: energy_kernel_gw_hubbard_nn},
         )
 
     raise ValueError(

@@ -5,6 +5,8 @@ from ad_afqmc_prototype import driver
 from ad_afqmc_prototype.core.ops import TrialOps
 from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.chol import HamBasis, HamChol
+from ad_afqmc_prototype.ham.hubbard import HamHubbard
+from ad_afqmc_prototype.ham.hubbard_nn import HamHubbardNN
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.prop.afqmc import make_prop_ops
 from ad_afqmc_prototype.staging import _stage_ham_input, StagedMfOrCc
@@ -53,6 +55,57 @@ def make_random_ham_chol(
     h0 = jax.random.normal(k3, (), dtype=dtype)
 
     return HamChol(basis=basis, h0=h0, h1=h1, chol=chol)
+
+
+def make_random_ham_hubbard(
+    key, n_sites, dtype=jnp.float64
+) -> HamHubbard:
+    """
+    Build a small HamHubbard with:
+      - symmetric real h1
+    """
+
+    k1, k2 = jax.random.split(key, 2)
+
+    a = jax.random.normal(k1, (n_sites, n_sites), dtype=dtype)
+    h1 = 0.5 * (a + a.T)
+
+    u = jax.random.normal(k2, (), dtype=dtype)
+
+    return HamHubbard(h1=h1, u=u)
+
+
+def make_random_ham_hubbard_nn(
+    key, n_sites, n_bonds, dtype=jnp.float64
+) -> HamHubbardNN:
+    """
+    Build a small HamHubbardNN with:
+      - symmetric real h1
+    """
+    def random_unique_bonds(key, n_sites: int, n_bonds: int):
+        # number of possible undirected bonds
+        n_pairs = n_sites * (n_sites - 1) // 2
+        n_bonds = min(n_bonds, n_pairs)
+
+        # sample unique indices in [0, n_pairs)
+        idx = jax.random.choice(key, n_pairs, shape=(n_bonds,), replace=False)
+
+        # map each index -> (i, j) with i < j
+        # build lookup table once (OK for moderate n_sites)
+        i, j = jnp.triu_indices(n_sites, k=1)   # each shape (n_pairs,)
+        bonds = jnp.stack([i[idx], j[idx]], axis=1)  # (nbonds, 2), i<j
+        return bonds.astype(jnp.int32)
+
+    k1, k2, k3, k4 = jax.random.split(key, 2)
+
+    a = jax.random.normal(k1, (n_sites, n_sites), dtype=dtype)
+    h1 = 0.5 * (a + a.T)
+
+    u = jax.random.normal(k2, (), dtype=dtype)
+    v = jax.random.normal(k3, (), dtype=dtype)
+    bonds = random_unique_bonds(k4, n_sites=n_sites, n_bonds=n_bonds)
+
+    return HamHubbardNN(h1=h1, u=u, v=v, bonds=bonds)
 
 
 def make_walkers(key, sys: System, dtype=jnp.complex128):
@@ -161,6 +214,51 @@ def make_common_manual_only(
     ham = make_random_ham_chol(k_ham, norb=norb, n_chol=n_chol)
     trial = make_trial_fn(k_trial, **make_trial_fn_kwargs)
     ctx = build_meas_ctx_fn(ham, trial)
+
+    return sys, ham, trial, ctx
+
+
+def make_common_hubbard(
+    key,
+    walker_kind,
+    n_sites: int,
+    nelec: tuple[int, int],
+    *,
+    make_trial_fn,
+    make_trial_fn_kwargs=(),
+    make_trial_ops_fn,
+    build_meas_ctx_fn,
+):
+    sys = System(norb=n_sites, nelec=nelec, walker_kind=walker_kind)
+
+    k_ham, k_trial = jax.random.split(key, 2)
+
+    ham = make_random_ham_hubbard(k_ham, n_sites=n_sites)
+    trial = make_trial_fn(k_trial, **make_trial_fn_kwargs)
+    ctx = None
+
+    return sys, ham, trial, ctx
+
+
+def make_common_hubbard_nn(
+    key,
+    walker_kind,
+    n_sites: int,
+    n_bonds: int,
+    nelec: tuple[int, int],
+    *,
+    make_trial_fn,
+    make_trial_fn_kwargs=(),
+    make_trial_ops_fn,
+    build_meas_ctx_fn,
+):
+    sys = System(norb=n_sites, nelec=nelec, walker_kind=walker_kind)
+
+    k_ham, k_trial = jax.random.split(key, 2)
+
+    ham = make_random_ham_hubbard_nn(k_ham, n_sites=n_sites, n_bonds=n_bonds)
+    trial = make_trial_fn(k_trial, **make_trial_fn_kwargs)
+    ctx = None
 
     return sys, ham, trial, ctx
 
