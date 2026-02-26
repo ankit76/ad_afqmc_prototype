@@ -7,6 +7,7 @@ from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.chol import HamBasis, HamChol
 from ad_afqmc_prototype.ham.hubbard import HamHubbard
 from ad_afqmc_prototype.ham.hubbard_nn import HamHubbardNN
+from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.prop.afqmc import make_prop_ops
 from ad_afqmc_prototype.staging import _stage_ham_input, StagedMfOrCc
@@ -29,6 +30,13 @@ def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
 
     q, _ = jnp.linalg.qr(a, mode="reduced")
     return q.astype(dtype)
+
+
+def make_random_uhf_trial(key, norb, nup, ndn, dtype=jnp.complex128):
+    ka, kb = jax.random.split(key)
+    ca = rand_orthonormal_cols(ka, norb, nup, dtype=dtype)
+    cb = rand_orthonormal_cols(kb, norb, ndn, dtype=dtype)
+    return UhfTrial(mo_coeff_a=ca, mo_coeff_b=cb)
 
 
 def make_random_ham_chol(
@@ -108,28 +116,47 @@ def make_random_ham_hubbard_nn(
     return HamHubbardNN(h1=h1, u=u, v=v, bonds=bonds)
 
 
-def make_walkers(key, sys: System, dtype=jnp.complex128):
+def make_walkers(key, sys: System, nw: int=1, dtype=jnp.complex128):
     """
-    Build a random walker that can be either
-    - restricted (norb, nocc)
-    - unrestricted ((norb, na), (norb, nb))
-    - generalized (2*norb, na+nb)
+    Build `nw` random walkers that can be either
+    - restricted (nw, norb, nocc)
+    - unrestricted ((nw, norb, na), (nw, norb, nb))
+    - generalized (nw, 2*norb, na+nb)
     """
     norb, na, nb = sys.norb, sys.nup, sys.ndn
     wk = sys.walker_kind.lower()
 
     if wk == "restricted":
-        w = rand_orthonormal_cols(key, norb, na, dtype=dtype)
+        w = jnp.stack([
+            rand_orthonormal_cols(
+                jax.random.fold_in(key, i), norb, na, dtype=dtype
+            ) for i in range(nw)
+        ])
+        if nw == 1: return w[0]
         return w
 
-    if wk == "unrestricted":
+    elif wk == "unrestricted":
         k1, k2 = jax.random.split(key)
-        wu = rand_orthonormal_cols(k1, norb, na, dtype=dtype)
-        wd = rand_orthonormal_cols(k2, norb, nb, dtype=dtype)
+        wu = jnp.stack([
+            rand_orthonormal_cols(
+                jax.random.fold_in(k1, i), norb, na, dtype=dtype
+            ) for i in range(nw)
+        ])
+        wd = jnp.stack([
+            rand_orthonormal_cols(
+                jax.random.fold_in(k2, i), norb, nb, dtype=dtype
+            ) for i in range(nw)
+        ])
+        if nw == 1: return (wu[0], wd[0])
         return (wu, wd)
 
-    if wk == "generalized":
-        w = rand_orthonormal_cols(key, 2 * norb, na + nb, dtype=dtype)
+    elif wk == "generalized":
+        w = jnp.stack([
+            rand_orthonormal_cols(
+                jax.random.fold_in(key, i), 2*norb, na+nb, dtype=dtype
+            ) for i in range(nw)
+        ])
+        if nw == 1: return w[0]
         return w
 
     raise ValueError(f"unknown walker_kind: {sys.walker_kind}")

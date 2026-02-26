@@ -50,17 +50,16 @@ def cpmc_step(
     overlaps = wk.vmap_chunked(
         meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)
-    overlaps = jnp.real(overlaps)
 
     # constrained-path weight update via real overlap ratio
     ratio = jnp.real(overlaps / state.overlaps)
-    ratio = jnp.where(ratio < w_floor, 0.0, ratio)
+    ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
     node_encounters_step = jnp.sum(ratio <= 0.0)
     weights = state.weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
     # two body: scan over sites
-    hs = prop_ctx.hs_constant  # (2,2)
+    hs = prop_ctx.hs_constant  # (2, 2)
 
     def scanned_fun(carry, x):
         walkers, overlaps, weights, node_encounters = carry
@@ -72,9 +71,8 @@ def cpmc_step(
         ov0 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
             (w0_up, w0_dn), trial_data
         )
-        ov0 = jnp.real(ov0)
-        r0 = 0.5 * jnp.real(ov0 / overlaps)
-        r0 = jnp.where(r0 < w_floor, 0.0, r0)
+        r0 = ov0 / overlaps
+        r0 = jnp.where(r0 <= w_floor, 0.0, r0)
         node_encounters += jnp.sum(r0 <= 0.0)
 
         # propose field 1 update at site x
@@ -83,25 +81,25 @@ def cpmc_step(
         ov1 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
             (w1_up, w1_dn), trial_data
         )
-        ov1 = jnp.real(ov1)
-        r1 = 0.5 * jnp.real(ov1 / overlaps)
-        r1 = jnp.where(r1 < w_floor, 0.0, r1)
+        r1 = ov1 / overlaps
+        r1 = jnp.where(r1 <= w_floor, 0.0, r1)
         node_encounters += jnp.sum(r1 <= 0.0)
 
         # normalize probabilities
-        norm = r0 + r1 + 1.0e-13
-        p0 = r0 / norm
+        p0 = 0.5 * r0.real
+        p1 = 0.5 * r1.real
+        norm = p0 + p1 + 1.0e-13
+        p0 = p0 / norm
 
-        rns = uniform_rns[:, x]
-        choose0 = rns < p0  # (nw,)
+        choose0 = uniform_rns[:, x] < p0  # (nw,)
 
         # update walkers
         c_up = jnp.where(choose0, hs[0, 0], hs[1, 0])
         c_dn = jnp.where(choose0, hs[0, 1], hs[1, 1])
-
         w_up = w_up.at[:, x, :].mul(c_up[:, None])
         w_dn = w_dn.at[:, x, :].mul(c_dn[:, None])
 
+        # update overlap and weights
         overlaps = jnp.where(choose0, ov0, ov1)
         weights = weights * norm
 
@@ -118,10 +116,8 @@ def cpmc_step(
     overlaps_new = wk.vmap_chunked(
         meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)
-    overlaps_new = jnp.real(overlaps_new)
-
     ratio = jnp.real(overlaps_new / overlaps)
-    ratio = jnp.where(ratio < w_floor, 0.0, ratio)
+    ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
     node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
@@ -129,10 +125,8 @@ def cpmc_step(
     # population control factor and shift update
     weights = weights * jnp.exp(prop_ctx.dt * state.pop_control_ene_shift)
     weights = jnp.where(weights > w_cap, 0.0, weights)
-
     avg_w = jnp.clip(jnp.mean(weights), min=1.0e-300)
     pop_shift_new = state.e_estimate - damping * (jnp.log(avg_w) / prop_ctx.dt)
-
     node_encounters_new = state.node_encounters + node_encounters_step
 
     return PropState(
