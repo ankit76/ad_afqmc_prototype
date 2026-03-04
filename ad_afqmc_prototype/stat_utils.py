@@ -128,7 +128,6 @@ def blocking_analysis_ratio(
         "bias": bias,
         "z_score": z,
     }
-
     if print_q:
         print(
             f"mu: {out['mu']:.16g}  SE*: {out['se_star']:.16g}  95% CI: {out['ci95_star']}"

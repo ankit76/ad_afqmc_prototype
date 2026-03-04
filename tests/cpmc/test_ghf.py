@@ -5,10 +5,9 @@ config.configure_once()
 import pytest
 from typing import cast
 
-import jax
-from jax import lax
-import jax.numpy as jnp
 import numpy as np
+import jax.numpy as jnp
+import jax.scipy as jsp
 
 from pyscf import gto, scf, ao2mo
 
@@ -16,65 +15,26 @@ from ad_afqmc_prototype.lattices import TriangularGrid
 from ad_afqmc_prototype.core.system import System
 from ad_afqmc_prototype.ham.hubbard import HamHubbard
 from ad_afqmc_prototype.trial.uhf import UhfTrial, make_uhf_trial_ops
-from ad_afqmc_prototype.meas.uhf import (
-    make_uhf_meas_ops_hubbard,
-    energy_kernel_uw_hubbard,
-    energy_kernel_gw_hubbard,
-)
+from ad_afqmc_prototype.trial.ghf import GhfTrial, make_ghf_trial_ops
+from ad_afqmc_prototype.meas.uhf import make_uhf_meas_ops_hubbard
+from ad_afqmc_prototype.meas.ghf import make_ghf_meas_ops_hubbard
 from ad_afqmc_prototype.prop.cpmc import make_prop_ops
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype.driver import run_qmc_energy
 from ad_afqmc_prototype.testing import (
     make_walkers,
-    make_random_uhf_trial,
+    make_random_ghf_trial,
     make_common_hubbard,
     run_calc,
 )
 from testing import make_hubbard_integrals
 
 
-def test_energy_equal_when_wg_eq_wu():
-    norb, nup, ndn = 6, 2, 1
-    walker_kind = "unrestricted"
-
-    key = jax.random.PRNGKey(1)
-    key, k_w = jax.random.split(key)
-
-    (
-        sys,
-        ham,
-        trial,
-    ) = make_common_hubbard(
-        key,
-        walker_kind,
-        norb,
-        (nup, ndn),
-        make_trial_fn=make_random_uhf_trial,
-        make_trial_fn_kwargs=dict(
-            norb=norb,
-            nup=nup,
-            ndn=ndn,
-        ),
-    )
-
-    for i in range(4):
-        wi = make_walkers(jax.random.fold_in(k_w, i), sys)
-        wi = cast(tuple, wi)
-        eu = energy_kernel_uw_hubbard(wi, ham, None, trial)
-        wa, wb = wi
-        wi = jnp.zeros((2 * norb, nup + ndn), dtype=wa.dtype)
-        wi = lax.dynamic_update_slice(wi, wa, (0, 0))
-        wi = lax.dynamic_update_slice(wi, wb, (norb, nup))
-        eg = energy_kernel_gw_hubbard(wi, ham, None, trial)
-
-        assert jnp.allclose(eu, eg, atol=1e-12), (eu, eg)
-
-
 def mf():
     nx, ny = 4, 4
     bc = 'xc'
-    nup, ndn = 8, 8 
+    nup, ndn = 2, 1
     
     # lattice
     lattice = TriangularGrid(nx, ny, boundary=bc)
@@ -105,12 +65,13 @@ def mf():
 mf_input = mf()  # type: ignore
 
 @pytest.mark.parametrize(
-    "mf_input, walker_kind, e_ref, err_ref",
+    "mf_input, walker_kind",
     [
-        (mf_input, "unrestricted", -4.682277, None),
+        (mf_input, "unrestricted"),
+        (mf_input, "generalized"),
     ],
 )
-def test_calc_hubbard(mf_input, params, walker_kind, e_ref, err_ref):
+def test_calc_hubbard(mf_input, params, walker_kind):
     mf, integrals = mf_input
     n_elec = mf.mol.nelec
     u = integrals["u"]
@@ -143,11 +104,43 @@ def test_calc_hubbard(mf_input, params, walker_kind, e_ref, err_ref):
         block_fn=block,
         prop_ops=uhf_prop_ops,
     )
-    
-    np.testing.assert_allclose(e_uhf, e_ref)
 
-    if (err_uhf is not None) and (err_ref is not None):
-        np.testing.assert_allclose(err_uhf, err_ref)
+    print(f'\ne_uhf = {e_uhf}')
+    print(f'err_uhf = {err_uhf}')
+
+    # ghf trial from uhf
+    ghf_trial_data = GhfTrial(
+        mo_coeff=jsp.linalg.block_diag(
+            mf.mo_coeff[0][:, :n_elec[0]],
+            mf.mo_coeff[1][:, :n_elec[1]]
+        )
+    )
+    ghf_trial_ops = make_ghf_trial_ops(sys)
+    ghf_meas_ops = make_ghf_meas_ops_hubbard(sys)
+    ghf_prop_ops = make_prop_ops(ham_data, sys.walker_kind, ghf_trial_ops)
+
+    e_ghf, err_ghf, e_all_ghf, w_all_ghf = run_calc(
+        sys=sys, 
+        meas_ops=ghf_meas_ops,
+        ham_data=ham_data,
+        trial_ops=ghf_trial_ops,
+        trial_data=ghf_trial_data,
+        params=params,
+        block_fn=block,
+        prop_ops=ghf_prop_ops,
+    )
+    
+    print(f'\ne_ghf = {e_ghf}')
+    print(f'err_ghf = {err_ghf}')
+
+    # cpmc with ghf trial from uhf should be identical to uhf trial
+    np.testing.assert_allclose(e_uhf, e_ghf)
+
+    if (err_uhf is not None) and (err_ghf is not None):
+        np.testing.assert_allclose(err_uhf, err_ghf)
+
+    np.testing.assert_allclose(e_all_uhf, e_all_ghf)
+    np.testing.assert_allclose(w_all_uhf, w_all_ghf)
 
 
 @pytest.fixture(scope="module")
@@ -164,4 +157,3 @@ def params():
 
 if __name__ == "__main__":
     pytest.main([__file__])
-

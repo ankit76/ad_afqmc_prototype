@@ -55,7 +55,6 @@ def init_prop_state(
         n_chunks=params.n_chunks,
         in_axes=(0, None),
     )(initial_walkers, trial_data)
-    overlaps = jnp.real(overlaps)
 
     e_est = None
     if initial_e_estimate is not None:
@@ -101,21 +100,20 @@ def cpmc_step(
       - trial_ops.calc_green
       - trial_ops.calc_overlap_ratio
       - trial_ops.update_green
-    Walkers: unrestricted (w_up, w_dn), each (nw, n_sites, n_elec_spin).
+    Walkers: 
+        - unrestricted (w_up, w_dn), each (nw, n_sites, n_elec_spin).
+        - generalized, (nw, 2*n_sites, n_elec).
     """
     green_ops = require_cpmc_trial_ops(trial_ops)
-    key, subkey = jax.random.split(state.rng_key)
-    n_sites = cpmc_ops.n_sites()
     walkers = state.walkers
     nw = wk.n_walkers(walkers)
+    walker_kind = prop_ctx.walker_kind
     node_encounters_step = jnp.asarray(0)
-
-    # uniform HS sampling
-    uniform_rns = jax.random.uniform(subkey, (nw, n_sites))
 
     w_floor = float(getattr(params, "weight_floor", 1.0e-8))
     w_cap = float(getattr(params, "weight_cap", 100.0))
     damping = float(getattr(params, "pop_control_damping", 0.1))
+
 
     # one body half step (1)
     walkers = wk.vmap_chunked(
@@ -131,17 +129,19 @@ def cpmc_step(
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
     # compute greens
-    hs = prop_ctx.hs_constant  # (2, 2)
     greens = wk.vmap_chunked(
         green_ops.calc_green, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)
     
     # two body: scan over sites
+    n_sites = cpmc_ops.n_sites()
+    hs = prop_ctx.hs_constant  # (2,2)
+    key, subkey = jax.random.split(state.rng_key)
+    uniform_rns = jax.random.uniform(subkey, (nw, n_sites)) # uniform HS fields
+
     def scanned_fun(carry, x):
         walkers, overlaps, weights, greens, node_encounters = carry
-        w_up, w_dn = walkers
-
-        update_indices = jnp.array([[0, x], [1, x]], dtype=jnp.int32) # (2, 2)
+        upd_indices = jnp.array([[0, x], [1, x]], dtype=jnp.int32) # (2,2)
 
         # field 0 ratio
         upd0 = hs[0] - 1.0
@@ -149,7 +149,7 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, update_indices, upd0)
+        )(greens, upd_indices, upd0)
         r0 = jnp.where(r0 <= w_floor, 0.0, r0) # constraint
         node_encounters = node_encounters + jnp.sum(r0 <= 0.0)
 
@@ -159,7 +159,7 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, update_indices, upd1)
+        )(greens, upd_indices, upd1)
         r1 = jnp.where(r1 <= w_floor, 0.0, r1) # constraint
         node_encounters = node_encounters + jnp.sum(r1 <= 0.0)
         
@@ -169,24 +169,32 @@ def cpmc_step(
         norm = p0 + p1 + 1.0e-13
         p0 = p0 / norm
 
+        # random choice
         choose0 = uniform_rns[:, x] < p0  # (nw,)
 
         # apply chosen HS constants to walker row x
-        c_up = jnp.where(choose0, hs[0, 0], hs[1, 0])
+        c_up = jnp.where(choose0, hs[0, 0], hs[1, 0]) 
         c_dn = jnp.where(choose0, hs[0, 1], hs[1, 1])
-        w_up = w_up.at[:, x, :].mul(c_up[:, None])
-        w_dn = w_dn.at[:, x, :].mul(c_dn[:, None])
-        walkers = (w_up, w_dn)
+
+        if walker_kind == "unrestricted":
+            w_up = walkers[0].at[:, x, :].mul(c_up.reshape(-1, 1))
+            w_dn = walkers[1].at[:, x, :].mul(c_dn.reshape(-1, 1))
+            walkers = (w_up, w_dn)
+
+        elif walker_kind == "generalized":
+            walkers = walkers.at[:, x, :].mul(c_up.reshape(-1, 1))
+            walkers = walkers.at[:, x+n_sites, :].mul(c_dn.reshape(-1, 1))
 
         # update overlap and weights
         r = jnp.where(choose0, r0, r1)
         overlaps = overlaps * r
         weights = weights * norm
+        
         # fast greens update
         upd_constants = jnp.stack([c_up - 1.0, c_dn - 1.0], axis=1)  # (nw, 2)
         greens = wk.vmap_chunked(
             green_ops.update_green, n_chunks=params.n_chunks, in_axes=(0, None, 0)
-        )(greens, update_indices, upd_constants)
+        )(greens, upd_indices, upd_constants)
 
         return (walkers, overlaps, weights, greens, node_encounters), None
 
@@ -200,9 +208,9 @@ def cpmc_step(
     walkers = wk.vmap_chunked(
         cpmc_ops.apply_one_body_half, params.n_chunks, in_axes=(0, None)
     )(walkers, prop_ctx)
-    overlaps_new = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
-        walkers, trial_data
-    )
+    overlaps_new = wk.vmap_chunked(
+        meas_ops.overlap, params.n_chunks, in_axes=(0, None)
+    )(walkers, trial_data)
     ratio = jnp.real(overlaps_new / overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio) # constraint
     node_encounters_step = node_encounters_step + jnp.sum(ratio <= 0.0)
@@ -263,7 +271,7 @@ def make_prop_ops(
         trial_data: Any,
         params: QmcParams,
     ) -> HubbardCpmcCtx:
-        return _build_prop_ctx(ham_data, params.dt)
+        return _build_prop_ctx(ham_data, params.dt, walker_kind)
 
     return PropOps(
         init_prop_state=init_prop_state,

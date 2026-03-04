@@ -27,23 +27,28 @@ class HubbardNNCpmcCtx:
     """
 
     dt: jax.Array
+    walker_kind: str
     exp_h1_half: jax.Array  # (n,n)
     hs_constant_onsite: jax.Array  # (2,2)
     hs_constant_nn: jax.Array  # (2,2)
 
     def tree_flatten(self):
-        return (
+        children = (
             self.dt, 
             self.exp_h1_half, 
             self.hs_constant_onsite, 
             self.hs_constant_nn,
-        ), None
+        )
+        aux = self.walker_kind
+        return children, aux
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         dt, exp_h1_half, hs_constant_onsite, hs_constant_nn = children
+        walker_kind = aux
         return cls(
             dt=dt, 
+            walker_kind=walker_kind,
             exp_h1_half=exp_h1_half, 
             hs_constant_onsite=hs_constant_onsite,
             hs_constant_nn=hs_constant_nn,
@@ -115,7 +120,7 @@ def _apply_one_body_half_generalized(
     return jnp.vstack([top, bot])
 
 
-def _build_prop_ctx(ham_data: HamHubbardNN, dt: float) -> HubbardNNCpmcCtx:
+def _build_prop_ctx(ham_data: HamHubbardNN, dt: float, walker_kind: str) -> HubbardNNCpmcCtx:
     dt_a = jnp.asarray(dt)
     u_a = jnp.asarray(ham_data.u)
     v_a = jnp.asarray(ham_data.v)
@@ -123,6 +128,7 @@ def _build_prop_ctx(ham_data: HamHubbardNN, dt: float) -> HubbardNNCpmcCtx:
     hs_constant_onsite, hs_constant_nn = _build_hs_constant(u_a, v_a, dt_a)  # (2,2)
     return HubbardNNCpmcCtx(
         dt=dt_a, 
+        walker_kind=walker_kind,
         exp_h1_half=exp_h1_half, 
         hs_constant_onsite=hs_constant_onsite,
         hs_constant_nn=hs_constant_nn,

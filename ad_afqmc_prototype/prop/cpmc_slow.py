@@ -30,14 +30,16 @@ def cpmc_step(
 ) -> PropState:
     """
     One CPMC step with discrete spin HS fields, implemented without fast updates.
-    Requires only overlap for a single walker.
-    Walkers are assumed to be unrestricted and stored as (w_up, w_dn), each (nw,n,ne).
+    Requires:
+      - trial_ops.overlap
+    Walkers: 
+        - unrestricted (w_up, w_dn), each (nw, n_sites, n_elec_spin).
+        - generalized, (nw, 2*n_sites, n_elec).
     """
-    key, subkey = jax.random.split(state.rng_key)
-    nw = wk.n_walkers(state.walkers)
-    n_sites = cpmc_ops.n_sites()
-
-    uniform_rns = jax.random.uniform(subkey, (nw, n_sites))
+    walkers = state.walkers
+    nw = wk.n_walkers(walkers)
+    walker_kind = prop_ctx.walker_kind
+    node_encounters_step = jnp.asarray(0)
 
     w_floor = float(getattr(params, "weight_floor", 1.0e-8))
     w_cap = float(getattr(params, "weight_cap", 100.0))
@@ -46,7 +48,7 @@ def cpmc_step(
     # one body half step
     walkers = wk.vmap_chunked(
         cpmc_ops.apply_one_body_half, params.n_chunks, in_axes=(0, None)
-    )(state.walkers, prop_ctx)
+    )(walkers, prop_ctx)
     overlaps = wk.vmap_chunked(
         meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)
@@ -59,27 +61,43 @@ def cpmc_step(
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
     # two body: scan over sites
-    hs = prop_ctx.hs_constant  # (2, 2)
-
+    n_sites = cpmc_ops.n_sites()
+    key, subkey = jax.random.split(state.rng_key)
+    hs = prop_ctx.hs_constant  # (2,2)
+    uniform_rns = jax.random.uniform(subkey, (nw, n_sites)) # uniform HS fields
+    
     def scanned_fun(carry, x):
         walkers, overlaps, weights, node_encounters = carry
-        w_up, w_dn = walkers
 
-        # propose field 0 update at site x
-        w0_up = w_up.at[:, x, :].mul(hs[0, 0])
-        w0_dn = w_dn.at[:, x, :].mul(hs[0, 1])
+        if walker_kind == "unrestricted":
+            # propose field 0 update at site x
+            w0_up = walkers[0].at[:, x, :].mul(hs[0, 0])
+            w0_dn = walkers[1].at[:, x, :].mul(hs[0, 1])
+            w0 = (w0_up, w0_dn)
+
+            # propose field 1 update at site x
+            w1_up = walkers[0].at[:, x, :].mul(hs[1, 0])
+            w1_dn = walkers[1].at[:, x, :].mul(hs[1, 1])
+            w1 = (w1_up, w1_dn)
+
+        elif walker_kind == "generalized":
+            # propose field 0 update at site x
+            w0 = walkers.at[:, x, :].mul(hs[0, 0])
+            w0 = w0.at[:, x+n_sites, :].mul(hs[0, 1])
+
+            # propose field 1 update at site x
+            w1 = walkers.at[:, x, :].mul(hs[1, 0])
+            w1 = w1.at[:, x+n_sites, :].mul(hs[1, 1])
+
         ov0 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
-            (w0_up, w0_dn), trial_data
+            w0, trial_data
         )
         r0 = ov0 / overlaps
         r0 = jnp.where(r0 <= w_floor, 0.0, r0)
         node_encounters += jnp.sum(r0 <= 0.0)
 
-        # propose field 1 update at site x
-        w1_up = w_up.at[:, x, :].mul(hs[1, 0])
-        w1_dn = w_dn.at[:, x, :].mul(hs[1, 1])
         ov1 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
-            (w1_up, w1_dn), trial_data
+            w1, trial_data
         )
         r1 = ov1 / overlaps
         r1 = jnp.where(r1 <= w_floor, 0.0, r1)
@@ -91,19 +109,23 @@ def cpmc_step(
         norm = p0 + p1 + 1.0e-13
         p0 = p0 / norm
 
+        # random choice
         choose0 = uniform_rns[:, x] < p0  # (nw,)
 
         # update walkers
-        c_up = jnp.where(choose0, hs[0, 0], hs[1, 0])
-        c_dn = jnp.where(choose0, hs[0, 1], hs[1, 1])
-        w_up = w_up.at[:, x, :].mul(c_up[:, None])
-        w_dn = w_dn.at[:, x, :].mul(c_dn[:, None])
+        if walker_kind == "unrestricted":
+            w_up = jnp.where(choose0.reshape(-1, 1, 1), w0[0], w1[0])
+            w_dn = jnp.where(choose0.reshape(-1, 1, 1), w0[1], w1[1])
+            walkers = (w_up, w_dn)
+        
+        elif walker_kind == "generalized":
+            walkers = jnp.where(choose0.reshape(-1, 1, 1), w0, w1)
 
         # update overlap and weights
         overlaps = jnp.where(choose0, ov0, ov1)
         weights = weights * norm
 
-        return ((w_up, w_dn), overlaps, weights, node_encounters), x
+        return (walkers, overlaps, weights, node_encounters), x
 
     (walkers, overlaps, weights, node_encounters_step), _ = lax.scan(
         scanned_fun,
@@ -112,7 +134,9 @@ def cpmc_step(
     )
 
     # one body half step again
-    walkers = cpmc_ops.apply_one_body_half(walkers, prop_ctx)
+    walkers = wk.vmap_chunked(
+        cpmc_ops.apply_one_body_half, params.n_chunks, in_axes=(0, None)
+    )(walkers, prop_ctx)
     overlaps_new = wk.vmap_chunked(
         meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)

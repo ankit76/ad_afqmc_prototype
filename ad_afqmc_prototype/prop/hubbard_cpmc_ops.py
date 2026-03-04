@@ -15,10 +15,11 @@ from ..ham.hubbard import HamHubbard
 @dataclass(frozen=True)
 class HubbardCpmcCtx:
     """
-    Propagation context for (slow) CPMC.
-
+    Propagation context for CPMC.
+    
+    walker_kind: {unrestricted, generalized} 
     exp_h1_half: exp(-dt/2 * h1).
-    hs_constant encodes the discrete HS factors including the overall constant exp(-dt*U/2).
+    hs_constant: encodes the discrete HS factors including the overall constant exp(-dt*U/2).
 
       hs_constant has shape (2, 2):
         hs_constant[0] -> field 0 factors (up, dn)
@@ -26,16 +27,25 @@ class HubbardCpmcCtx:
     """
 
     dt: jax.Array
+    walker_kind: str
     exp_h1_half: jax.Array  # (n,n)
     hs_constant: jax.Array  # (2,2)
 
     def tree_flatten(self):
-        return (self.dt, self.exp_h1_half, self.hs_constant), None
+        children = (self.dt, self.exp_h1_half, self.hs_constant)
+        aux = self.walker_kind
+        return children, aux
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         dt, exp_h1_half, hs_constant = children
-        return cls(dt=dt, exp_h1_half=exp_h1_half, hs_constant=hs_constant)
+        walker_kind = aux
+        return cls(
+            dt=dt, 
+            walker_kind=walker_kind,
+            exp_h1_half=exp_h1_half, 
+            hs_constant=hs_constant,
+        )
 
 
 class HubbardCpmcOps(NamedTuple):
@@ -77,11 +87,11 @@ def _apply_one_body_half_unrestricted(
 
 def _apply_one_body_half_generalized(
     walker: jax.Array, prop_ctx: HubbardCpmcCtx
-) -> tuple[jax.Array, jax.Array]:
+) -> jax.Array:
     """
     Apply one body half step to a batch of unrestricted Hubbard walkers.
 
-    walkers is expected to be a tuple/list (wu, wd), each with shape (nw, n, ne_sigma).
+    walkers is expected to be a jax.Array with shape (nw, n, ne).
     """
     norb = walker.shape[0] // 2
     top = prop_ctx.exp_h1_half @ walker[:norb, :]
@@ -89,12 +99,17 @@ def _apply_one_body_half_generalized(
     return jnp.vstack([top, bot])
 
 
-def _build_prop_ctx(ham_data: HamHubbard, dt: float) -> HubbardCpmcCtx:
-    dt_a = jnp.asarray(dt)
-    u_a = jnp.asarray(ham_data.u)
-    exp_h1_half = _build_exp_h1_half(ham_data.h1, dt_a)  # (n,n)
-    hs_constant = _build_hs_constant(u_a, dt_a)  # (2,2)
-    return HubbardCpmcCtx(dt=dt_a, exp_h1_half=exp_h1_half, hs_constant=hs_constant)
+def _build_prop_ctx(ham_data: HamHubbard, dt: float, walker_kind: str) -> HubbardCpmcCtx:
+    dt = jnp.asarray(dt)
+    u = jnp.asarray(ham_data.u)
+    exp_h1_half = _build_exp_h1_half(ham_data.h1, dt)  # (n,n)
+    hs_constant = _build_hs_constant(u, dt)  # (2,2)
+    return HubbardCpmcCtx(
+        dt=dt, 
+        walker_kind=walker_kind,
+        exp_h1_half=exp_h1_half, 
+        hs_constant=hs_constant
+    )
 
 
 def make_hubbard_cpmc_ops(ham_data: HamHubbard, walker_kind: str) -> HubbardCpmcOps:
