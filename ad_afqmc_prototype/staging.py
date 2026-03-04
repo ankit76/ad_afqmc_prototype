@@ -4,11 +4,12 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
-from .ham.chol import HamBasis
+from typing import Any, Dict, Optional, Tuple, Union, cast
 
 import h5py
 import numpy as np
+
+from .ham.chol import HamBasis
 
 # This file contains staging utilities to convert pyscf mf/cc objects
 # into serializable data classes representing Hamiltonian and trial
@@ -127,9 +128,7 @@ def chunked_cholesky(mol, max_error=1e-6, verbose=False, cmax=10):
         sl -= 1
     Mapprox = np.zeros(nao * nao)
     # ERI[:,jl]
-    eri_col = mol.intor(
-        "int2e_sph", shls_slice=(0, mol.nbas, 0, mol.nbas, sj, sj + 1, sl, sl + 1)
-    )
+    eri_col = mol.intor("int2e_sph", shls_slice=(0, mol.nbas, 0, mol.nbas, sj, sj + 1, sl, sl + 1))
     cj, cl = max(j - dims[sj], 0), max(l - dims[sl], 0)
     chol_vecs[0] = np.copy(eri_col[:, :, cj, cl].reshape(nao * nao)) / delta_max**0.5
 
@@ -189,7 +188,7 @@ class HamInput:
     chol_cut: float
     norb_frozen: int
     source_kind: str  # "mf" or "cc"
-    basis: HamBasis # "restricted" or "generalized"
+    basis: HamBasis  # "restricted" or "generalized"
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,31 +211,28 @@ class StagedInputs:
 @dataclass(frozen=True, slots=True)
 class StagedCc:
     """Wrapper ensuring the validity of the CC object"""
+
     _delegate = {"t1", "t2", "_scf"}
-    kind: str # "ccsd", "uccsd", "gccsd"
+    kind: str  # "ccsd", "uccsd", "gccsd"
     cc: Any
     mf: Any
     norb_frozen: int
 
     def __init__(self, cc: Any, norb_frozen: int):
         from pyscf.cc.ccsd import CCSD
-        from pyscf.cc.uccsd import UCCSD
         from pyscf.cc.gccsd import GCCSD
+        from pyscf.cc.uccsd import UCCSD
 
         if not isinstance(cc, (CCSD, UCCSD, GCCSD)):
             raise TypeError(f"Unsupported object type: {type(cc)}")
 
         if not hasattr(cc, "_scf"):
-            raise TypeError(
-                "CC-like object missing _scf reference to underlying scf object."
-            )
+            raise TypeError("CC-like object missing _scf reference to underlying scf object.")
         else:
             mf = cc._scf
 
         if not hasattr(cc, "mol"):
-            raise TypeError(
-                "CC-like object missing mol reference to underlying mol object."
-            )
+            raise TypeError("CC-like object missing mol reference to underlying mol object.")
         else:
             mol = cc.mol
 
@@ -252,15 +248,13 @@ class StagedCc:
 
         if not hasattr(cc, "frozen") or cc.frozen is None:
             assert (
-                norb_frozen == 0 or norb_frozen == None
+                norb_frozen == 0 or norb_frozen is None
             ), "cc has no frozen attribute, staging frozen must be 0."
             norb_frozen = 0
         elif norb_frozen is None:
             norb_frozen = cc.frozen
         elif isinstance(cc.frozen, int):
-            assert (
-                cc.frozen == norb_frozen
-            ), "cc.frozen and staging frozen must be equal."
+            assert cc.frozen == norb_frozen, "cc.frozen and staging frozen must be equal."
         else:
             raise ValueError(f"Unexpected type '{type(cc.frozen)}' for cc.frozen.")
 
@@ -278,41 +272,43 @@ class StagedCc:
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "norb_frozen", norb_frozen)
 
-    @property
-    def norb_frozen(self) -> Array:
-        return self.norb_frozen
-
     def __getattr__(self, name):
         if name in StagedCc._delegate:
             return getattr(self.cc, name)
         elif hasattr(self.cc, name):
-            raise AttributeError(f"Attribute '{name}' exists in the CC object but not in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' exists in the CC object but not in this wrapper."
+            )
         elif hasattr(self.mf, name):
-            raise AttributeError(f"Attribute '{name}' exists in the SCF object but not in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' exists in the SCF object but not in this wrapper."
+            )
         else:
-            raise AttributeError(f"Attribute '{name}' does not exist in the SCF and CC objects or in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' does not exist in the SCF and CC objects or in this wrapper."
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class StagedMf:
     """Wrapper ensuring the validity of the SCF object"""
+
     _delegate = {"mo_coeff", "mol", "nelec", "get_ovlp", "energy_nuc", "get_hcore"}
-    kind: str # "rhf", "rohf", "uhf", ghf
-    mf: Any # Python SCF object
+    kind: str  # "rhf", "rohf", "uhf", ghf
+    mf: Any  # Python SCF object
     norb_frozen: int
 
     def __init__(self, mf: Any, norb_frozen: int):
+        from pyscf.scf.ghf import GHF
         from pyscf.scf.hf import RHF
         from pyscf.scf.rohf import ROHF
         from pyscf.scf.uhf import UHF
-        from pyscf.scf.ghf import GHF
 
         if not isinstance(mf, (RHF, ROHF, UHF, GHF)):
             raise TypeError(f"Unsupported object type: {type(mf)}")
 
         if not hasattr(mf, "mol"):
-            raise TypeError(
-                "SCF-like object missing mol reference to underlying mol object."
-            )
+            raise TypeError("SCF-like object missing mol reference to underlying mol object.")
         else:
             mol = mf.mol
 
@@ -330,11 +326,11 @@ class StagedMf:
 
         # TODO: I will add error messages
         if norb_frozen is not None:
-            assert type(norb_frozen) == int
+            assert isinstance(norb_frozen, int)
             assert norb_frozen >= 0
             assert norb_frozen < mf.mo_coeff.shape[-1]
             if kind != "ghf":
-                assert 2*norb_frozen < max(mol.nelec[0], mol.nelec[1])
+                assert 2 * norb_frozen < max(mol.nelec[0], mol.nelec[1])
             else:
                 assert norb_frozen < mol.nelectron
         else:
@@ -344,41 +340,43 @@ class StagedMf:
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "norb_frozen", norb_frozen)
 
-    @property 
-    def norb(self) -> Array:
+    @property
+    def norb(self) -> int:
         return self.mf.mo_coeff.shape[-1]
- 
-    @property 
-    def norb_frozen(self) -> Array:
-        return self.norb_frozen
 
     def __getattr__(self, name):
         if name in StagedMf._delegate:
             return getattr(self.mf, name)
         elif hasattr(self.mf, name):
-            raise AttributeError(f"Attribute '{name}' exists in the SCF object but not in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' exists in the SCF object but not in this wrapper."
+            )
         else:
-            raise AttributeError(f"Attribute '{name}' does not exist in the SCF object or in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' does not exist in the SCF object or in this wrapper."
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class StagedMfOrCc:
     """Wrapper ensuring the validity of the SCF/CC object"""
-    _delegate_mf = StagedMf._delegate 
+
+    _delegate_mf = StagedMf._delegate
     _delegate_cc = StagedCc._delegate
-    kind: str # StageCc.kind or StagedMf.kind
-    source: str # "cc", "mf" 
-    mf_or_cc: Any # StagedMf or StagedCc
+    kind: str  # StageCc.kind or StagedMf.kind
+    source: str  # "cc", "mf"
+    mf_or_cc: Any  # StagedMf or StagedCc
     mf: StagedMf
     norb_frozen: int
 
     def __init__(self, mf_or_cc, norb_frozen):
+        from pyscf.cc.ccsd import CCSD
+        from pyscf.cc.gccsd import GCCSD
+        from pyscf.cc.uccsd import UCCSD
+        from pyscf.scf.ghf import GHF
         from pyscf.scf.hf import RHF
         from pyscf.scf.rohf import ROHF
         from pyscf.scf.uhf import UHF
-        from pyscf.scf.ghf import GHF
-        from pyscf.cc.ccsd import CCSD
-        from pyscf.cc.uccsd import UCCSD
-        from pyscf.cc.gccsd import GCCSD
 
         if isinstance(mf_or_cc, (CCSD, UCCSD, GCCSD)):
             mf_or_cc = StagedCc(mf_or_cc, norb_frozen)
@@ -397,22 +395,25 @@ class StagedMfOrCc:
         object.__setattr__(self, "kind", mf_or_cc.kind)
         object.__setattr__(self, "norb_frozen", mf_or_cc.norb_frozen)
 
-    @property
-    def norb_frozen(self) -> Array:
-        return self.norb_frozen
-
     def __getattr__(self, name):
         if name in StagedMfOrCc._delegate_cc:
             return getattr(self.mf_or_cc, name)
         elif name in StagedMfOrCc._delegate_mf:
             return getattr(self.mf, name)
         elif self.source == "cc" and hasattr(self.mf_or_cc.cc, name):
-            raise AttributeError(f"Attribute '{name}' exists in the CC object but not in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' exists in the CC object but not in this wrapper."
+            )
         elif hasattr(self.mf.mf, name):
-            raise AttributeError(f"Attribute '{name}' exists in the SCF object but not in this wrapper.")
+            raise AttributeError(
+                f"Attribute '{name}' exists in the SCF object but not in this wrapper."
+            )
         else:
-            raise AttributeError(f"Attribute '{name}' does not exist in the SCF and CC objects or in this wrapper.") 
-    
+            raise AttributeError(
+                f"Attribute '{name}' does not exist in the SCF and CC objects or in this wrapper."
+            )
+
+
 # public API
 def stage(
     obj: Any,
@@ -514,12 +515,12 @@ def load(path: Union[str, Path]) -> StagedInputs:
     p = Path(path).expanduser().resolve()
     return _load_h5(p)
 
+
 def _is_cc_like(obj: Any) -> bool:
     return hasattr(obj, "t1") and hasattr(obj, "t2")
 
-def _stage_ham_input(
-    obj: StagedMfOrCc, *, chol_cut: float, verbose: bool
-) -> HamInput:
+
+def _stage_ham_input(obj: StagedMfOrCc, *, chol_cut: float, verbose: bool) -> HamInput:
     """
     Produce h0/h1/chol in a single orthonormal basis.
     For UHF, we use the alpha MO basis for integrals.
@@ -530,7 +531,7 @@ def _stage_ham_input(
     scf_obj = obj.mf
 
     match scf_obj.kind:
-        case "rhf"| "rohf" | "ghf":
+        case "rhf" | "rohf" | "ghf":
             basis_coeff = np.asarray(scf_obj.mo_coeff)
         case "uhf":
             basis_coeff = np.asarray(scf_obj.mo_coeff[0])
@@ -557,9 +558,7 @@ def _stage_ham_input(
     t0 = time.time()
     chol_vec = chunked_cholesky(mol, max_error=chol_cut, verbose=verbose)
     if verbose:
-        print(
-            f"[stage] AO cholesky: nchol={chol_vec.shape[0]} in {time.time() - t0:.2f}s"
-        )
+        print(f"[stage] AO cholesky: nchol={chol_vec.shape[0]} in {time.time() - t0:.2f}s")
 
     # full space electron count
     nelec: Tuple[int, int] = (int(mol.nelec[0]), int(mol.nelec[1]))
@@ -576,8 +575,9 @@ def _stage_ham_input(
         chol = tmp @ C
     else:
         import scipy.linalg as la
+
         norb = basis_coeff.shape[1] // 2
-        chol = np.zeros((nchol, 2*norb, 2*norb), dtype=C.dtype)
+        chol = np.zeros((nchol, 2 * norb, 2 * norb), dtype=C.dtype)
         for i in range(nchol):
             chol_i = chol_vec[i].reshape(norb, norb)
             bchol_i = la.block_diag(chol_i, chol_i)
@@ -586,9 +586,7 @@ def _stage_ham_input(
     # freeze core
     if norb_frozen > 0 and scf_obj.kind != "ghf":
         if norb_frozen > min(nelec):
-            raise ValueError(
-                f"norb_frozen={norb_frozen} exceeds min(nelec)={min(nelec)}"
-            )
+            raise ValueError(f"norb_frozen={norb_frozen} exceeds min(nelec)={min(nelec)}")
 
         nelec_frozen = 2 * norb_frozen
         ncas = basis_coeff.shape[1] - norb_frozen
@@ -608,7 +606,9 @@ def _stage_ham_input(
         norb = int(ncas)
         nelec = tuple(int(x) for x in mc.nelecas)  # type: ignore
     elif norb_frozen > 0 and scf_obj.kind == "ghf":
-        raise NotImplementedError(f"Frozen core approximation not available for generalised integrals.")
+        raise NotImplementedError(
+            "Frozen core approximation not available for generalised integrals."
+        )
 
     return HamInput(
         h0=h0,
@@ -621,6 +621,7 @@ def _stage_ham_input(
         source_kind=obj.source,
         basis=ham_basis,
     )
+
 
 def _stage_trial_input(obj: StagedMfOrCc) -> TrialInput:
     """
@@ -674,11 +675,11 @@ def _stage_mf_input(obj: StagedMfOrCc) -> TrialInput:
 
 
 def _mf_coeff_helper(
-    Ca: np.Array,
-    Cb: np.Array,
-    S: np.Array,
+    Ca: np.ndarray,
+    Cb: np.ndarray,
+    S: np.ndarray,
     norb_frozen: int,
-) -> np.Array:
+) -> np.ndarray:
     q, r = np.linalg.qr(Ca.T @ S @ Cb)
     sgn = np.sign(np.diag(r))
     q = q * sgn[None, :]
@@ -694,9 +695,7 @@ def _stage_cisd_input(obj: StagedMfOrCc) -> TrialInput:
     t1 = obj.t1
     t2 = obj.t2
 
-    ci2 = np.asarray(t2) + np.einsum(
-        "ia,jb->ijab", np.asarray(t1), np.asarray(t1)
-    )
+    ci2 = np.asarray(t2) + np.einsum("ia,jb->ijab", np.asarray(t1), np.asarray(t1))
     ci2 = ci2.transpose(0, 2, 1, 3)  # (i,a,j,b) -> (i,j,a,b)
     ci1 = np.asarray(t1)
 
@@ -716,21 +715,15 @@ def _stage_ucisd_input(obj: StagedMfOrCc) -> TrialInput:
     t1a, t1b = obj.t1
     t2aa, t2ab, t2bb = obj.t2
 
-    ci2aa = np.asarray(t2aa) + 2.0 * np.einsum(
-        "ia,jb->ijab", np.asarray(t1a), np.asarray(t1a)
-    )
+    ci2aa = np.asarray(t2aa) + 2.0 * np.einsum("ia,jb->ijab", np.asarray(t1a), np.asarray(t1a))
     ci2aa = 0.5 * (ci2aa - ci2aa.transpose(0, 1, 3, 2))
     ci2aa = ci2aa.transpose(0, 2, 1, 3)
 
-    ci2bb = np.asarray(t2bb) + 2.0 * np.einsum(
-        "ia,jb->ijab", np.asarray(t1b), np.asarray(t1b)
-    )
+    ci2bb = np.asarray(t2bb) + 2.0 * np.einsum("ia,jb->ijab", np.asarray(t1b), np.asarray(t1b))
     ci2bb = 0.5 * (ci2bb - ci2bb.transpose(0, 1, 3, 2))
     ci2bb = ci2bb.transpose(0, 2, 1, 3)
 
-    ci2ab = np.asarray(t2ab) + np.einsum(
-        "ia,jb->ijab", np.asarray(t1a), np.asarray(t1b)
-    )
+    ci2ab = np.asarray(t2ab) + np.einsum("ia,jb->ijab", np.asarray(t1a), np.asarray(t1b))
     ci2ab = ci2ab.transpose(0, 2, 1, 3)
 
     _uhf_input = _stage_mf_input(obj)
@@ -831,7 +824,7 @@ def _load_h5(path: Path) -> StagedInputs:
             chol_cut=float(gham.attrs["chol_cut"]),
             norb_frozen=int(gham.attrs["norb_frozen"]),
             source_kind=str(gham.attrs["source_kind"]),
-            basis=str(gham.attrs["basis"])
+            basis=cast(HamBasis, str(gham.attrs["basis"])),
         )
 
         gtr: Any = f["trial"]

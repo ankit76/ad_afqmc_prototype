@@ -1,0 +1,325 @@
+# Architecture Overview
+
+## AFQMC background
+
+Auxiliary Field Quantum Monte Carlo (AFQMC) computes low-lying electronic states
+by stochastically propagating a population of **walkers** (Slater
+determinants) in imaginary time. At each time step a **propagator** applies a
+Trotter-decomposed exponential of the Hamiltonian, using random **auxiliary
+fields** sampled via the Hubbard-Stratonovich transformation. A **trial
+wave function** supplies the quantities needed for importance
+sampling and the phaseless constraint that controls the sign problem.
+**Measurements** (energy, density matrices, etc.) are taken as mixed estimators
+between the walkers and the trial at the end of each block of propagation
+steps. See [Motta and Zhang, 2017](https://arxiv.org/pdf/1711.02242) for a comprehensive review
+of _ab initio_ AFQMC. The code in this package is based on JAX, enabling end-to-end
+automatic differentiation, JIT compilation, vectorization, and GPU acceleration.
+
+---
+
+## Code layout
+
+```
+ad_afqmc_prototype/
+|-- __init__.py
+|-- afqmc.py                 High-level AFQMC driver class
+|-- config.py                JAX configuration (GPU, precision, logging)
+|-- staging.py               Convert PySCF objects to StagedInputs
+|-- setup.py                 Assemble a runnable Job from staged inputs
+|-- driver.py                QMC execution loop (equilibration + sampling)
+|-- walkers.py               Walker init, orthogonalization, stochastic reconfiguration
+|-- sharding.py              JAX multidevice sharding utilities
+|-- stat_utils.py            Blocking analysis and outlier rejection
+|-- testing.py               Testing helpers
+|-- lattices.py              Lattices for models
+|-- vap.py                   Symmetry projected GHF (variation after projection)
+|
+|-- core/
+|   |-- __init__.py
+|   |-- system.py            System dataclass, WalkerKind type
+|   |-- typing.py            Shared type aliases (ham_data, trial_data, etc.)
+|   |-- ops.py               TrialOps, MeasOps, HamOps protocols
+|   +-- levels.py            MLMC level specifications (LevelSpec, LevelPack)
+|
+|-- ham/
+|   |-- __init__.py
+|   |-- chol.py              HamChol (Cholesky-decomposed Hamiltonian)
+|   +-- hubbard.py           Hubbard model Hamiltonian
+|
+|-- trial/
+|   Includes trial wave function data and operations for various trial types
+|
+|-- meas/
+|   Contains measurement operations for various trial types
+|
+|-- prop/
+|   |-- __init__.py
+|   |-- types.py             PropState, QmcParams, PropOps
+|   |-- afqmc.py             AFQMC propagation (init + step)
+|   |-- blocks.py            Block execution
+|   |-- chol_afqmc_ops.py    Low level Cholesky AFQMC operations
+|   |-- cpmc.py              CPMC propagation with fast updates
+|   |-- cpmc_slow.py         CPMC propagation without fast updates
+|   |-- hubbard_cpmc_ops.py  Low level Hubbard model CPMC operations
+|   +-- utils.py             Propagation utilities
+```
+
+---
+
+## Calculation flow
+
+A simulation has three stages: **staging**, **job assembly**, and
+**QMC execution**.
+
+```
+PySCF object (RHF / UHF / GHF / CCSD / UCCSD)
+  |
+  |  staging.stage()
+  v
+StagedInputs  (HamInput + TrialInput + metadata)
+  |                    \--- optionally cached as HDF5
+  |  setup.setup()
+  v
+Job  (System + QmcParams + HamChol + trial_data + ops bundles)
+  |
+  |  Job.kernel()  -->  driver.run_qmc_energy()
+  v
++---------------------------------------------------------------+
+| QMC loop                                                      |
+|                                                               |
+|  1. Build prop_ctx (Trotter operators, MF shifts)             |
+|  2. Build meas_ctx (intermediates for estimators,             |
+|     like half-rotated integrals)                              |
+|  3. Initialise walkers from trial RDM1                        |
+|                                                               |
+|  4. Equilibration  (n_eql_blocks)                             |
+|     for each block:                                           |
+|       - n_prop_steps AFQMC steps (sample fields, propagate,   |
+|         update weights, population control)                   |
+|       - orthogonalise walkers (QR)                            |
+|       - measure block energy                                  |
+|       - stochastic reconfiguration                            |
+|                                                               |
+|  5. Sampling  (n_blocks)                                      |
+|       same as equilibration, but block energies are recorded  |
+|                                                               |
+|  6. Outlier rejection + blocking analysis                     |
++---------------------------------------------------------------+
+  |
+  v
+(mean_energy, stderr, block_energies, block_weights)
+```
+
+**Staging** (`staging.py`) takes a PySCF mean field or coupled cluster object
+and produces `StagedInputs`: the Cholesky decomposed Hamiltonian (`HamInput`)
+and trial wave function data (`TrialInput`), with optional HDF5 caching.
+
+**Job assembly** (`setup.py`) converts `StagedInputs` into JAX arrays,
+selects the appropriate `trial_ops` / `meas_ops` /
+`prop_ops`, and bundles everything into a `Job`.
+
+**QMC execution** (`driver.py`) runs the equilibration and sampling loops,
+calling the JIT compiled `block` function with `jax.lax.scan`.
+
+---
+
+## Key objects
+
+| Type           | Module                   | Role                                                                                                                                                                                      |
+| -------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `System`       | `core/system.py`         | Static system config: `norb`, `nelec`, `walker_kind`                                                                                                                                      |
+| `HamChol`      | `ham/chol.py`            | Cholesky decomposed Hamiltonian (`h0`, `h1`, `chol`).                                                                                                                                     |
+| `QmcParams`    | `prop/types.py`          | QMC parameters: `dt`, `n_walkers`, `n_blocks`, `seed`, etc.                                                                                                                               |
+| `PropState`    | `prop/types.py`          | Immutable simulation state (`NamedTuple`): walkers, weights, overlaps, RNG key, energy shift. Each step returns a new instance                                                            |
+| `trial_data`   | `trial/*.py`             | Trial wave function data (e.g. MO and CI coefficients).                                                                                                                                   |
+| `TrialOps`     | `core/ops.py`            | Trial wave function operations: `overlap`, `get_rdm1`, optional CPMC functions                                                                                                            |
+| `MeasOps`      | `core/ops.py`            | Measurement operations: required `"energy"` and `"force_bias"` kernels, optional observables (`"rdm1"`, `"density_corr"`, ...)                                                            |
+| `PropOps`      | `prop/types.py`          | Propagation operations: `init_prop_state`, `build_prop_ctx`, `step`                                                                                                                       |
+| `meas_ctx`     | `meas/*.py`              | Precomputed measurement intermediates (e.g. half-rotated integrals), built once by `MeasOps.build_meas_ctx` and reused every block                                                        |
+| `prop_ctx`     | `prop/chol_afqmc_ops.py` | Precomputed propagation intermediates (`CholAfqmcCtx`: Trotter exponentials, mean-field shifts, flattened Cholesky vectors), built once by `PropOps.build_prop_ctx` and reused every step |
+| `Job`          | `setup.py`               | Fully assembled run bundle, built once by `PropOps.build_prop_ctx` and reused every step                                                                                                  |
+| `StagedInputs` | `staging.py`             | Intermediate representation: `HamInput` + `TrialInput` + metadata, can be serialized to disk                                                                                              |
+
+### When to use which container
+
+Objects that flow through JAX transformations (`jit`, `lax.scan`, `vmap`) as
+dynamic values must be **JAX pytrees** so their array leaves can be traced.
+
+- **`NamedTuple` (as pytree)** — automatically a pytree with all fields as
+  children. Good when every field is a JAX array and no validation or
+  defaults are needed. Used for `PropState` (threaded through `lax.scan`
+  each step).
+- **`NamedTuple` (as record)** — also useful as a lightweight immutable
+  record even when pytree behaviour is not needed, as long as you don't
+  need methods or `default_factory`. Used for `TrialOps` (a simple bag of
+  callables with `None` defaults, captured in JIT closures).
+- **`@dataclass(frozen=True)` + manual pytree registration** — needed when
+  some fields are static metadata (strings, ints) that belong in `aux_data`
+  rather than traced children, or when you want `__post_init__` validation
+  or non-trailing defaults. Used for `HamChol`, `meas_ctx`, and `prop_ctx`.
+- **Plain `@dataclass(frozen=True)` (not a pytree)** — for objects that are
+  never traced: static configuration captured in JIT closures or passed via
+  `static_argnames`. Preferred over `NamedTuple` when you need methods or
+  `field(default_factory=...)`. Used for `QmcParams`, `System`, `MeasOps`
+  (which has helper methods like `require_kernel()`), and `PropOps`.
+
+Note that large objects like the Hamiltonian should not be closed over in JIT
+closures as they can lead to excessive compilation time and memory usage.
+
+---
+
+## Walker and Hamiltonian representations
+
+The `WalkerKind` literal (`"restricted"`, `"unrestricted"`, `"generalized"`)
+determines how walker Slater determinants are stored. All walker arrays are complex
+in _ab_initio_ AFQMC.
+Cholesky Hamiltonian also follows the same basis conventions. Measurement function names
+like force bias and energy indicate the walker and Hamiltonian kinds with suffixes, e.g., `_uw_rh` for
+unrestricted walkers and restricted Hamiltonians.
+
+### Restricted
+
+Used for R(O)HF like walkers. A single coefficient matrix represents
+both spins:
+
+```
+walkers: (n_walkers, norb, n_occ)
+```
+
+where n_occ = max(nup, ndn). Most commonly used.
+
+### Unrestricted
+
+Separate matrices for each spin:
+
+```
+walkers: (w_alpha, w_beta)
+  w_alpha: (n_walkers, norb, nup)
+  w_beta:  (n_walkers, norb, ndn)
+```
+
+### Generalized
+
+Used with GHF basis Hamiltonians. A single matrix over spin-orbitals:
+
+```
+walkers: (n_walkers, 2*norb, ne)      where ne = nup + ndn
+```
+
+Every trial type (RHF, UHF, CISD, ...) implements overlap functions for all
+three walker kinds, so walker kind and trial kind can be mixed freely. Currently
+the code supports `"restricted"` Hamiltonians in most cases and we are adding support for
+other kinds.
+
+---
+
+## Module summaries
+
+### `ham/` -- Hamiltonian
+
+Stores the molecular Hamiltonian in Cholesky decomposed form. `HamChol` holds
+the scalar energy `h0`, one body integrals `h1`, and Cholesky vectors `chol`.
+`HamChol` is a JAX pytree so it flows through `jit` and `lax.scan` without special handling.
+The module also provides `hubbard.py` for lattice model Hamiltonians.
+
+### `trial/` -- Trial Wave functions
+
+Each module defines a frozen dataclass for trial data (e.g. `RhfTrial`,
+`CisdTrial`, `UcisdTrial`), trial related functions like overlap, and a
+factory `make_<kind>_trial_ops(sys)` that returns a `TrialOps` bundle with
+the correct overlap function for the current walker type. Supported trial
+types: RHF, UHF, GHF, CISD, UCISD, GCISD, CIS, EOM-CISD, and multi-GHF.
+
+`auto.py` is useful for prototyping and testing: it only requires the definition
+of the overlap and other quantities like force bias and energy are calculated by
+taking derivatives.
+
+### `meas/` -- Measurements
+
+Mirrors `trial/` one to one, and defines measurement operations for each trial type.
+Each module provides `make_<kind>_meas_ops(sys)` factory returning a `MeasOps` with required
+algorithm kernels (`"energy"`, `"force_bias"`) and optional observable kernels (`"rdm1"`,
+`"density_corr"`, etc.). Measurement contexts (`meas_ctx`) contain intermediates
+evaluated once at the beginning of the calculations, like half-rotated integrals,
+that allow for efficient estimator evaluation.
+
+### `prop/` -- Propagation
+
+Drives the imaginary time evolution. `types.py` defines `QmcParams`,
+`PropState`, and `PropOps`. `afqmc.py` implements the standard phaseless
+AFQMC step (auxiliary field sampling, Trotter propagation, importance sampling and constraint,
+population control). `chol_afqmc_ops.py` contains low-level
+Cholesky specific operations (Trotter exponentials, mean field shifts).
+`blocks.py` packages a full block of propagation steps plus walker
+orthogonalisation, measurement, and stochastic reconfiguration.
+
+`cpmc.py` implements constrained path Monte Carlo as an alternative
+propagation method for Hubbard models.
+
+### `core/` -- Core Types
+
+Defines the basic types: `System` and `WalkerKind` (`system.py`),
+operation protocols `TrialOps` / `MeasOps` / `HamOps` (`ops.py`), type aliases
+(`typing.py`), and MLMC level specifications `LevelSpec` / `LevelPack`
+(`levels.py`).
+
+---
+
+## Entry points
+
+The package offers three levels of API, from highest to lowest:
+
+### 1. `AFQMC` class (high-level)
+
+Defined in `afqmc.py`. Accepts a PySCF mean field or coupled cluster object
+and handles staging, job assembly, and execution internally:
+
+```python
+from ad_afqmc_prototype import AFQMC
+
+afqmc = AFQMC(mf, norb_frozen=1, n_walkers=200, n_blocks=200)
+mean, err = afqmc.kernel()
+```
+
+Key attributes: `walker_kind`, `mixed_precision`, `staged`, `job`, `e_tot`,
+`e_err`.
+
+### 2. `setup()` function (mid-level)
+
+Defined in `setup.py`. Builds a `Job` from a PySCF object, `StagedInputs`, or
+an HDF5 cache path, with full control over walker kind, precision, QMC
+parameters, and custom operation overrides:
+
+```python
+from ad_afqmc_prototype.setup import setup
+
+job = setup(mf, walker_kind="restricted", mixed_precision=False)
+mean, err, block_e, block_w = job.kernel()
+```
+
+### 3. `run_qmc()` / `run_qmc_energy()` (low-level)
+
+Defined in `driver.py`. Operates directly on prebuilt components. Useful
+when you need to supply a custom `PropState`, swap out individual operation
+bundles, request specific observables, or resume a run:
+
+```python
+from ad_afqmc_prototype.driver import run_qmc
+
+result = run_qmc(
+    sys=sys,
+    params=params,
+    ham_data=ham_data,
+    trial_data=trial_data,
+    trial_ops=trial_ops,
+    meas_ops=meas_ops,
+    prop_ops=prop_ops,
+    block_fn=block_fn,
+    observable_names=("rdm1",),
+)
+```
+
+`run_qmc` returns a `QmcResult` namedtuple with `mean_energy`,
+`stderr_energy`, `block_energies`, `block_weights`, `block_observables`, and
+`observable_means`. The convenience wrapper `run_qmc_energy` returns only
+`(mean, stderr, block_energies, block_weights)`.

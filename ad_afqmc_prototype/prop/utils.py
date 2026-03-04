@@ -17,9 +17,7 @@ def taylor_expm_matrix(a: jax.Array, mat: jax.Array, n_terms: int) -> jax.Array:
     return out
 
 
-def taylor_expm_action(
-    a: jax.Array, mat: jax.Array, vecs: jax.Array, n_terms: int
-) -> jax.Array:
+def taylor_expm_action(a: jax.Array, mat: jax.Array, vecs: jax.Array, n_terms: int) -> jax.Array:
     """
     Apply exp(a * mat) to vecs without forming expm explicitly:
     """

@@ -42,9 +42,9 @@ def init_prop_state(
             rdm1 = trial_ops.get_rdm1(trial_data)
         initial_walkers = init_walkers(sys=sys, rdm1=rdm1, n_walkers=n_walkers)
 
-    overlaps = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(initial_walkers, trial_data)
+    overlaps = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        initial_walkers, trial_data
+    )
 
     e_est = None
     if initial_e_estimate is not None:
@@ -106,9 +106,9 @@ def afqmc_step(
         trotter_ops.apply_trotter, n_chunks=params.n_chunks, in_axes=(0, 0, None, None)
     )(state.walkers, shifted_fields, prop_ctx, params.n_exp_terms)
 
-    overlaps_new = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(walkers_new, trial_data)
+    overlaps_new = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        walkers_new, trial_data
+    )
     ratio = overlaps_new / state.overlaps
     exponent = (
         -prop_ctx.sqrt_dt * shift_term
@@ -145,12 +145,8 @@ def afqmc_step(
     )
 
 
-def make_prop_ops(
-    ham_basis: HamBasis, walker_kind: str, mixed_precision=False
-) -> PropOps:
-    trotter_ops = make_trotter_ops(
-        ham_basis, walker_kind, mixed_precision=mixed_precision
-    )
+def make_prop_ops(ham_basis: HamBasis, walker_kind: str, mixed_precision=False) -> PropOps:
+    trotter_ops = make_trotter_ops(ham_basis, walker_kind, mixed_precision=mixed_precision)
 
     def step(
         state: PropState,
@@ -174,9 +170,7 @@ def make_prop_ops(
             trotter_ops=trotter_ops,
         )
 
-    def build_prop_ctx(
-        ham_data: Any, rdm1: jax.Array, params: QmcParams
-    ) -> CholAfqmcCtx:
+    def build_prop_ctx(ham_data: Any, rdm1: jax.Array, params: QmcParams) -> CholAfqmcCtx:
         return _build_prop_ctx(
             ham_data,
             rdm1,
@@ -184,6 +178,4 @@ def make_prop_ops(
             chol_flat_precision=jnp.float32 if mixed_precision else jnp.float64,
         )
 
-    return PropOps(
-        init_prop_state=init_prop_state, build_prop_ctx=build_prop_ctx, step=step
-    )
+    return PropOps(init_prop_state=init_prop_state, build_prop_ctx=build_prop_ctx, step=step)

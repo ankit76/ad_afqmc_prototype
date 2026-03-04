@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import time
 from functools import partial
-from pprint import pprint
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -15,10 +14,28 @@ from .core.ops import MeasOps, TrialOps
 from .core.system import System
 from .prop.blocks import BlockFn
 from .prop.types import PropOps, PropState, QmcParams
-from .stat_utils import blocking_analysis_ratio, reject_outliers
+from .stat_utils import blocking_analysis_ratio, jackknife_ratios, rebin_observable, reject_outliers
 from .walkers import stochastic_reconfiguration
 
 print = partial(print, flush=True)
+
+
+class QmcResult(NamedTuple):
+    mean_energy: jax.Array
+    stderr_energy: jax.Array
+    block_energies: jax.Array
+    block_weights: jax.Array
+    block_observables: dict[str, jax.Array]
+    observable_means: dict[str, jax.Array]
+    observable_stderrs: dict[str, jax.Array]
+
+
+def _weighted_block_mean(values: jax.Array, weights: jax.Array) -> jax.Array:
+    w_sum = jnp.sum(weights)
+    w_shape = (weights.shape[0],) + (1,) * max(values.ndim - 1, 0)
+    num = jnp.sum(weights.reshape(w_shape) * values, axis=0)
+    zero = jnp.zeros_like(num)
+    return jnp.where(w_sum == 0, zero, num / w_sum)
 
 
 def make_run_blocks(
@@ -29,6 +46,7 @@ def make_run_blocks(
     trial_ops: TrialOps,
     meas_ops: MeasOps,
     prop_ops: PropOps,
+    observable_names: tuple[str, ...] = (),
 ) -> Callable:
     """
     Build a jitted run_blocks.
@@ -58,16 +76,18 @@ def make_run_blocks(
                 meas_ctx=meas_ctx,
                 prop_ops=prop_ops,
                 prop_ctx=prop_ctx,
+                observable_names=observable_names,
             )
-            return state, (obs.scalars["energy"], obs.scalars["weight"])
+            obs_tuple = tuple(obs.observables[name] for name in observable_names)
+            return state, (obs.scalars["energy"], obs.scalars["weight"], obs_tuple)
 
-        stateN, (e, w) = lax.scan(one_block, state0, xs=None, length=n_blocks)
-        return stateN, e, w
+        stateN, (e, w, obs) = lax.scan(one_block, state0, xs=None, length=n_blocks)
+        return stateN, e, w, obs
 
     return run_blocks
 
 
-def run_qmc_energy(
+def run_qmc(
     *,
     sys: System,
     params: QmcParams,
@@ -81,13 +101,17 @@ def run_qmc_energy(
     meas_ctx: Any | None = None,
     target_error: float | None = None,
     mesh: Mesh | None = None,
-) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    observable_names: tuple[str, ...] = (),
+) -> QmcResult:
     """
     equilibration blocks then sampling blocks.
 
     Returns:
-      (mean_energy, stderr, block_energies, block_weights)
+      QmcResult with energy statistics plus block-level observable estimates.
     """
+    for name in observable_names:
+        meas_ops.require_observable(name)
+
     # build ctx
     prop_ctx = prop_ops.build_prop_ctx(ham_data, trial_ops.get_rdm1(trial_data), params)
     if meas_ctx is None:
@@ -117,6 +141,7 @@ def run_qmc_energy(
         trial_ops=trial_ops,
         meas_ops=meas_ops,
         prop_ops=prop_ops,
+        observable_names=observable_names,
     )
 
     t0 = time.perf_counter()
@@ -125,6 +150,7 @@ def run_qmc_energy(
     print_every = params.n_eql_blocks // 5 if params.n_eql_blocks >= 5 else 0
     block_e_eq = []
     block_w_eq = []
+    block_obs_eq = {name: [] for name in observable_names}
     block_e_eq.append(state.e_estimate)
     block_w_eq.append(jnp.sum(state.weights))
     print("\nEquilibration:\n")
@@ -147,7 +173,7 @@ def run_qmc_energy(
     chunk = print_every if print_every > 0 else 1
     for start in range(0, params.n_eql_blocks, chunk):
         n = min(chunk, params.n_eql_blocks - start)
-        state, e_chunk, w_chunk = run_blocks(
+        state, e_chunk, w_chunk, obs_chunk = run_blocks(
             state,
             ham_data=ham_data,
             trial_data=trial_data,
@@ -157,6 +183,8 @@ def run_qmc_energy(
         )
         block_e_eq.extend(e_chunk.tolist())
         block_w_eq.extend(w_chunk.tolist())
+        for i, name in enumerate(observable_names):
+            block_obs_eq[name].append(obs_chunk[i])
         w_chunk_avg = jnp.mean(w_chunk)
         e_chunk_avg = jnp.mean(e_chunk * w_chunk) / w_chunk_avg
         elapsed = time.perf_counter() - t0
@@ -169,6 +197,10 @@ def run_qmc_energy(
         )
     block_e_eq = jnp.asarray(block_e_eq)
     block_w_eq = jnp.asarray(block_w_eq)
+    block_obs_eq = {
+        name: (jnp.concatenate(block_obs_eq[name], axis=0) if len(block_obs_eq[name]) > 0 else None)
+        for name in observable_names
+    }
 
     # sampling
     print("\nSampling:\n")
@@ -177,6 +209,7 @@ def run_qmc_energy(
     print_every = params.n_blocks // 10 if params.n_blocks >= 10 else 0
     block_e_s = []
     block_w_s = []
+    block_obs_s = {name: [] for name in observable_names}
     if print_every:
         print(
             f"{'':4s}{'block':>9s}  {'E_avg':>14s}  {'E_err':>10s}  {'E_block':>14s}  "
@@ -186,7 +219,7 @@ def run_qmc_energy(
     chunk = print_every if print_every > 0 else 1
     for start in range(0, params.n_blocks, chunk):
         n = min(chunk, params.n_blocks - start)
-        state, e_chunk, w_chunk = run_blocks(
+        state, e_chunk, w_chunk, obs_chunk = run_blocks(
             state,
             ham_data=ham_data,
             trial_data=trial_data,
@@ -196,6 +229,8 @@ def run_qmc_energy(
         )
         block_e_s.extend(e_chunk.tolist())
         block_w_s.extend(w_chunk.tolist())
+        for i, name in enumerate(observable_names):
+            block_obs_s[name].append(obs_chunk[i])
         w_chunk_avg = jnp.mean(w_chunk)
         e_chunk_avg = jnp.mean(e_chunk * w_chunk) / w_chunk_avg
         elapsed = time.perf_counter() - t0
@@ -222,16 +257,99 @@ def run_qmc_energy(
             break
     block_e_s = jnp.asarray(block_e_s)
     block_w_s = jnp.asarray(block_w_s)
+    block_obs_s = {
+        name: (jnp.concatenate(block_obs_s[name], axis=0) if len(block_obs_s[name]) > 0 else None)
+        for name in observable_names
+    }
 
-    data_clean, _ = reject_outliers(jnp.column_stack((block_e_s, block_w_s)), obs=0)
+    data_clean, keep_mask = reject_outliers(jnp.column_stack((block_e_s, block_w_s)), obs=0)
     print(f"\nRejected {block_e_s.shape[0] - data_clean.shape[0]} outlier blocks.")
     block_e_s = jnp.asarray(data_clean[:, 0])
     block_w_s = jnp.asarray(data_clean[:, 1])
+    keep_mask = jnp.asarray(keep_mask)
+    block_obs_s = {
+        name: (arr[keep_mask] if arr is not None else None) for name, arr in block_obs_s.items()
+    }
     print("\nFinal blocking analysis:")
     stats = blocking_analysis_ratio(block_e_s, block_w_s, print_q=True)
     mean, err = stats["mu"], stats["se_star"]
 
     block_e_all = jnp.concatenate([block_e_eq, block_e_s])
     block_w_all = jnp.concatenate([block_w_eq, block_w_s])
+    block_obs_all: dict[str, jax.Array] = {}
+    for name in observable_names:
+        arr_eq = block_obs_eq[name]
+        arr_s = block_obs_s[name]
+        if arr_eq is None and arr_s is None:
+            block_obs_all[name] = jnp.zeros((0,))
+            continue
+        if arr_eq is None:
+            arr_eq = arr_s[:0]
+        if arr_s is None:
+            arr_s = arr_eq[:0]
+        block_obs_all[name] = jnp.concatenate([arr_eq, arr_s], axis=0)
 
-    return mean, err, block_e_all, block_w_all
+    obs_means: dict[str, jax.Array] = {}
+    obs_stderrs: dict[str, jax.Array] = {}
+    b_star = stats.get("B_star")
+    for name in observable_names:
+        arr = block_obs_s[name]
+        if arr is None:
+            obs_means[name] = jnp.zeros((0,))
+            obs_stderrs[name] = jnp.zeros((0,))
+            continue
+        obs_means[name] = _weighted_block_mean(arr, block_w_s)
+        if b_star is not None and b_star >= 1:
+            import numpy as np
+
+            num, denom = rebin_observable(np.asarray(arr), np.asarray(block_w_s), b_star)
+            if num.shape[0] >= 2:
+                _, se = jackknife_ratios(num, denom)
+                obs_stderrs[name] = jnp.asarray(se)
+            else:
+                obs_stderrs[name] = jnp.full(arr.shape[1:], jnp.nan)
+        else:
+            obs_stderrs[name] = jnp.full(arr.shape[1:], jnp.nan)
+
+    return QmcResult(
+        mean_energy=mean,
+        stderr_energy=err,
+        block_energies=block_e_all,
+        block_weights=block_w_all,
+        block_observables=block_obs_all,
+        observable_means=obs_means,
+        observable_stderrs=obs_stderrs,
+    )
+
+
+def run_qmc_energy(
+    *,
+    sys: System,
+    params: QmcParams,
+    ham_data: Any,
+    trial_data: Any,
+    meas_ops: MeasOps,
+    trial_ops: TrialOps,
+    prop_ops: PropOps,
+    block_fn: BlockFn,
+    state: PropState | None = None,
+    meas_ctx: Any | None = None,
+    target_error: float | None = None,
+    mesh: Mesh | None = None,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    out = run_qmc(
+        sys=sys,
+        params=params,
+        ham_data=ham_data,
+        trial_data=trial_data,
+        meas_ops=meas_ops,
+        trial_ops=trial_ops,
+        prop_ops=prop_ops,
+        block_fn=block_fn,
+        state=state,
+        meas_ctx=meas_ctx,
+        target_error=target_error,
+        mesh=mesh,
+        observable_names=(),
+    )
+    return out.mean_energy, out.stderr_energy, out.block_energies, out.block_weights

@@ -43,9 +43,7 @@ def _v0_from_chol(chol: jax.Array) -> jax.Array:
     return 0.5 * jnp.einsum("gik,gjk->ij", chol, chol, optimize="optimal")
 
 
-def build_meas_ctx(
-    ham_data: HamChol, _trial_data: trial_data, eps: float = 1.0e-4
-) -> AutoMeasCtx:
+def build_meas_ctx(ham_data: HamChol, _trial_data: trial_data, eps: float = 1.0e-4) -> AutoMeasCtx:
     v0 = _v0_from_chol(ham_data.chol)
     h1_eff = ham_data.h1 - v0
     return AutoMeasCtx(h1_eff=h1_eff, eps=jnp.asarray(eps))
@@ -184,9 +182,7 @@ def _energy_from_overlap_array(
     sum_p = sum_overlap_quad(+eps)
     sum_m = sum_overlap_quad(-eps)
 
-    d2_sum = (
-        sum_p - 2.0 * jnp.asarray(n_fields, dtype=ovlp0.dtype) * ovlp0 + sum_m
-    ) / (eps * eps)
+    d2_sum = (sum_p - 2.0 * jnp.asarray(n_fields, dtype=ovlp0.dtype) * ovlp0 + sum_m) / (eps * eps)
 
     return (d_ovlp + 0.5 * d2_sum) / ovlp0 + h0
 
@@ -250,9 +246,7 @@ def energy_kernel_uw_rh(
 
     sum_p = sum_overlap_quad(+eps)
     sum_m = sum_overlap_quad(-eps)
-    d2_sum = (
-        sum_p - 2.0 * jnp.asarray(n_fields, dtype=ovlp0.dtype) * ovlp0 + sum_m
-    ) / (eps * eps)
+    d2_sum = (sum_p - 2.0 * jnp.asarray(n_fields, dtype=ovlp0.dtype) * ovlp0 + sum_m) / (eps * eps)
 
     return (d_ovlp + 0.5 * d2_sum) / ovlp0 + h0
 

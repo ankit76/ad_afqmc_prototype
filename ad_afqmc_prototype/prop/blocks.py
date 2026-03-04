@@ -29,11 +29,13 @@ class BlockFn(Protocol):
         prop_ops: PropOps,
         prop_ctx: Any,
         sr_fn: SrFn = wk.stochastic_reconfiguration,
+        observable_names: tuple[str, ...] = (),
     ) -> tuple[PropState, BlockObs]: ...
 
 
 class BlockObs(NamedTuple):
     scalars: dict[str, jax.Array]
+    observables: dict[str, jax.Array]
 
 
 def block(
@@ -49,6 +51,7 @@ def block(
     prop_ops: PropOps,
     prop_ctx: Any,
     sr_fn: Callable = wk.stochastic_reconfiguration,
+    observable_names: tuple[str, ...] = (),
 ) -> tuple[PropState, BlockObs]:
     """
     propagation + measurement
@@ -71,15 +74,15 @@ def block(
     state, _ = lax.scan(_scan_step, state, xs=None, length=params.n_prop_steps)
 
     walkers_new = wk.orthonormalize(state.walkers, sys.walker_kind)
-    overlaps_new = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(walkers_new, trial_data)
+    overlaps_new = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        walkers_new, trial_data
+    )
     state = state._replace(walkers=walkers_new, overlaps=overlaps_new)
 
     e_kernel = meas_ops.require_kernel(k_energy)
-    e_samples = wk.vmap_chunked(
-        e_kernel, n_chunks=params.n_chunks, in_axes=(0, None, None, None)
-    )(state.walkers, ham_data, meas_ctx, trial_data)
+    e_samples = wk.vmap_chunked(e_kernel, n_chunks=params.n_chunks, in_axes=(0, None, None, None))(
+        state.walkers, ham_data, meas_ctx, trial_data
+    )
     e_samples = jnp.real(e_samples)
 
     thresh = jnp.sqrt(2.0 / jnp.asarray(params.dt))
@@ -93,16 +96,25 @@ def block(
     e_block = jnp.where(w_sum == 0, e_ref, e_block)
 
     alpha = jnp.asarray(params.shift_ema, dtype=jnp.result_type(e_block))
-    state = state._replace(
-        e_estimate=(1.0 - alpha) * state.e_estimate + alpha * e_block
-    )
+    state = state._replace(e_estimate=(1.0 - alpha) * state.e_estimate + alpha * e_block)
+
+    obs_samples: dict[str, jax.Array] = {}
+    for name in observable_names:
+        kernel = meas_ops.require_observable(name)
+        samples = wk.vmap_chunked(kernel, n_chunks=params.n_chunks, in_axes=(0, None, None, None))(
+            state.walkers, ham_data, meas_ctx, trial_data
+        )
+        w_shape = (weights.shape[0],) + (1,) * max(samples.ndim - 1, 0)
+        num = jnp.sum(weights.reshape(w_shape) * samples, axis=0)
+        zero = jnp.zeros_like(num)
+        obs_samples[name] = jnp.where(w_sum == 0, zero, num / w_sum_safe)
 
     key, subkey = jax.random.split(state.rng_key)
     zeta = jax.random.uniform(subkey)
     w_sr, weights_sr = sr_fn(state.walkers, state.weights, zeta, sys.walker_kind)
-    overlaps_sr = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(w_sr, trial_data)
+    overlaps_sr = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        w_sr, trial_data
+    )
     state = state._replace(
         walkers=w_sr,
         weights=weights_sr,
@@ -110,7 +122,10 @@ def block(
         rng_key=key,
     )
 
-    obs = BlockObs(scalars={"energy": e_block, "weight": w_sum})
+    obs = BlockObs(
+        scalars={"energy": e_block, "weight": w_sum},
+        observables=obs_samples,
+    )
     return state, obs
 
 
@@ -160,6 +175,7 @@ def block_mlmc(
     prop_ops: PropOps,
     prop_ctx: Any,
     sr_fun: Callable = wk.stochastic_reconfiguration,
+    observable_names: tuple[str, ...] = (),
 ) -> tuple[PropState, BlockObs]:
     """
     propagation + MLMC measurement
@@ -186,9 +202,9 @@ def block_mlmc(
     state, _ = lax.scan(_scan_step, state, xs=None, length=params.n_prop_steps)
 
     walkers_new = wk.orthonormalize(state.walkers, sys.walker_kind)
-    overlaps_new = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(walkers_new, trial_data)
+    overlaps_new = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        walkers_new, trial_data
+    )
     state = state._replace(walkers=walkers_new, overlaps=overlaps_new)
 
     # --- MLMC measurement ---
@@ -273,23 +289,19 @@ def block_mlmc(
         num_inc_hat = scale * jnp.sum(w_sub * delta)
 
         num_corr = num_corr + jnp.real(num_inc_hat)
-        delta_blocks.append(
-            jnp.where(w_sum == 0, 0.0, jnp.real(num_inc_hat) / w_sum_safe)
-        )
+        delta_blocks.append(jnp.where(w_sum == 0, 0.0, jnp.real(num_inc_hat) / w_sum_safe))
 
     num_total = num0 + num_corr
     e_mlmc_block = jnp.where(w_sum == 0, e_ref, num_total / w_sum_safe)
 
     alpha = jnp.asarray(params.shift_ema, dtype=jnp.result_type(e_mlmc_block))
-    state = state._replace(
-        e_estimate=(1.0 - alpha) * state.e_estimate + alpha * e_mlmc_block
-    )
+    state = state._replace(e_estimate=(1.0 - alpha) * state.e_estimate + alpha * e_mlmc_block)
 
     zeta = jax.random.uniform(key_sr)
     w_sr, weights_sr = sr_fun(state.walkers, state.weights, zeta, sys.walker_kind)
-    overlaps_sr = wk.vmap_chunked(
-        meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
-    )(w_sr, trial_data)
+    overlaps_sr = wk.vmap_chunked(meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None))(
+        w_sr, trial_data
+    )
     state = state._replace(
         walkers=w_sr,
         weights=weights_sr,
@@ -307,6 +319,7 @@ def block_mlmc(
                 if delta_blocks
                 else jnp.zeros((0,), dtype=jnp.result_type(num0))
             ),
-        }
+        },
+        observables={},
     )
     return state, obs

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Any, Literal
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -17,31 +16,31 @@ class EomCisdTrial:
     """
     Restricted EOM CISD trial in an MO basis where the reference
     determinant occupies the first nocc orbitals.
-    
+
     Arrays:
-      ci1: (nocc, nvir)                     singles coefficients c_{i a}
-      ci2: (nocc, nvir, nocc, nvir)         doubles coefficients c_{i a j b}
-      r1: (nocc, nvir)                      singles coefficients r_{i a}
-      r2: (nocc, nvir, nocc, nvir)          doubles coefficients r_{i a j b}
+      ci1: (nocc, nvir)                singles coefficients c_{i a}
+      ci2: (nocc, nvir, nocc, nvir)    doubles coefficients c_{i a j b}
+      r1: (nocc, nvir)                 singles coefficients r_{i a}
+      r2: (nocc, nvir, nocc, nvir)     doubles coefficients r_{i a j b}
     """
 
     ci1: jax.Array
     ci2: jax.Array
     r1: jax.Array
     r2: jax.Array
-    
+
     @property
     def nocc(self) -> int:
         return int(self.ci1.shape[0])
-    
+
     @property
     def nvir(self) -> int:
         return int(self.ci1.shape[1])
-    
+
     @property
     def norb(self) -> int:
         return int(self.nocc + self.nvir)
-    
+
     def tree_flatten(self):
         children = (
             self.ci1,
@@ -51,7 +50,7 @@ class EomCisdTrial:
         )
         aux = None
         return children, aux
-    
+
     @classmethod
     def tree_unflatten(cls, aux, children):
         (
@@ -82,19 +81,19 @@ def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     r1 = trial_data.r1
     r2 = trial_data.r2
     nocc = trial_data.nocc
-    
+
     wocc = walker[:nocc, :]  # (nocc, nocc)
     green = jnp.linalg.solve(wocc.T, walker.T)  # (nocc, norb)
     green_occ = green[:, nocc:]
-    
+
     det0 = jnp.linalg.det(wocc)
     o0 = det0 * det0
-    
+
     # r1 terms
     # r1 1
     r1g = 2 * jnp.einsum("pt,pt", r1, green_occ)
     r1_1 = r1g
-    # r1 c1 
+    # r1 c1
     c1g = 2 * jnp.einsum("pt,pt", ci1, green_occ)
     r1_c1_1 = r1g * c1g
     r1_g = r1 @ green_occ.T
@@ -111,7 +110,7 @@ def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     gc2_g = (c2g_1 - c2g_2) @ green_occ.T
     r1_c2_2 = -4 * jnp.einsum("pq,qp", r1_g, gc2_g)
     r1_c2 = r1_c2_1 + r1_c2_2
-    
+
     # r2 terms
     # r2 1
     r2g2 = 2 * jnp.einsum("ptqu,pt,qu", r2, green_occ, green_occ) - jnp.einsum(
@@ -125,17 +124,15 @@ def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     gr2_g = (r2g_1 - r2g_2) @ green_occ.T
     r2_c1_2 = -4 * jnp.einsum("pq,qp", gr2_g, c1_g)
     r2_c1 = r2_c1_1 + r2_c1_2
-    
+
     # r2 c2
     r2_c2_1 = r2g2 * c2g2
     r2_c2_2 = -8 * jnp.einsum("pq,qp", gr2_g, gc2_g)
     r2_int = jnp.einsum("ptqu,rt,su->prqs", r2, green_occ, green_occ)
     c2_int = jnp.einsum("ptqu,rt,su->prqs", ci2, green_occ, green_occ)
-    r2_c2_3 = 2 * jnp.einsum("prqs,rpsq", r2_int, c2_int) - jnp.einsum(
-        "prqs,rqsp", r2_int, c2_int
-    )
+    r2_c2_3 = 2 * jnp.einsum("prqs,rpsq", r2_int, c2_int) - jnp.einsum("prqs,rqsp", r2_int, c2_int)
     r2_c2 = r2_c2_1 + r2_c2_2 + r2_c2_3
-    
+
     return (r1_1 + r1_c1 + r1_c2 + r2_1 + r2_c1 + r2_c2) * o0
 
 

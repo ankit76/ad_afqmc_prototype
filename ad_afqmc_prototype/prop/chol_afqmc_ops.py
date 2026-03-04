@@ -50,15 +50,14 @@ class CholAfqmcCtx:
 
 
 class TrotterOps(NamedTuple):
-    apply_trotter: Callable[
-        [Any, jax.Array, CholAfqmcCtx, int], Any
-    ]  # (w, field, ctx, n_terms)->w
+    apply_trotter: Callable[[Any, jax.Array, CholAfqmcCtx, int], Any]  # (w, field, ctx, n_terms)->w
 
 
 def _as_total_rdm1_restricted(dm: jax.Array) -> jax.Array:
     if dm.ndim == 3 and dm.shape[0] == 2:
         return dm[0] + dm[1]
     return dm
+
 
 def _get_dm(rdm1: jax.Array, ham_basis: str) -> jax.Array:
     match ham_basis:
@@ -70,9 +69,11 @@ def _get_dm(rdm1: jax.Array, ham_basis: str) -> jax.Array:
             raise ValueError(f"Unknown Hamiltonian basis kind: {ham_basis}")
     return dm
 
+
 def _mf_shifts(ham_data: HamChol, rdm1: jax.Array) -> jax.Array:
     dm = _get_dm(rdm1, ham_data.basis)
     return 1.0j * jnp.einsum("gij,ji->g", ham_data.chol, dm, optimize="optimal")
+
 
 def _build_exp_h1_half_from_h1(h1: jax.Array, dt: jax.Array) -> jax.Array:
     return jax.scipy.linalg.expm(-0.5 * dt * h1)
@@ -84,12 +85,11 @@ def _make_vhs_split_flat(*, chol_flat: jax.Array, x: jax.Array, n: int) -> jax.A
     v_im = jnp.imag(x) @ chol_flat  # (n*n,)
     return lax.complex(v_re, v_im).reshape(n, n)
 
+
 def _get_h1_eff(ham_data: HamChol, mf: jax.Array, h0_prop: jax.Array, rdm1: jax.Array) -> jax.Array:
     match ham_data.basis:
         case "restricted" | "generalized":
-            v0m = 0.5 * jnp.einsum(
-                "gik,gkj->ij", ham_data.chol, ham_data.chol, optimize="optimal"
-            )
+            v0m = 0.5 * jnp.einsum("gik,gkj->ij", ham_data.chol, ham_data.chol, optimize="optimal")
             mf_r = (1.0j * mf).real
             v1m = jnp.einsum("g,gik->ik", mf_r, ham_data.chol, optimize="optimal")
             h1_eff = ham_data.h1 - v0m - v1m
@@ -97,6 +97,7 @@ def _get_h1_eff(ham_data: HamChol, mf: jax.Array, h0_prop: jax.Array, rdm1: jax.
             raise ValueError(f"Unknown Hamiltonian basis kind: {ham_data.basis}")
 
     return h1_eff
+
 
 def _build_prop_ctx(
     ham_data: HamChol,
@@ -112,9 +113,7 @@ def _build_prop_ctx(
     h1_eff = _get_h1_eff(ham_data, mf, h0_prop, rdm1)
 
     exp_h1_half = _build_exp_h1_half_from_h1(h1_eff, dt_a)
-    chol_flat = ham_data.chol.reshape(ham_data.chol.shape[0], -1).astype(
-        chol_flat_precision
-    )
+    chol_flat = ham_data.chol.reshape(ham_data.chol.shape[0], -1).astype(chol_flat_precision)
     norb = ham_data.chol.shape[1]
     return CholAfqmcCtx(
         dt=dt_a,
@@ -236,12 +235,10 @@ def _apply_trotter_g_from_restricted(
     return _apply_one_body_half_generalized_from_restricted(w2, prop_ctx)
 
 
-def make_trotter_ops(
-    ham_basis: str, walker_kind: str, mixed_precision: bool = False
-) -> TrotterOps:
-    assert type(ham_basis) == str
-    assert type(walker_kind) == str
-    assert type(mixed_precision) == bool
+def make_trotter_ops(ham_basis: str, walker_kind: str, mixed_precision: bool = False) -> TrotterOps:
+    assert isinstance(ham_basis, str)
+    assert isinstance(walker_kind, str)
+    assert isinstance(mixed_precision, bool)
 
     walker_kind = walker_kind.lower()
 
@@ -273,14 +270,18 @@ def make_trotter_ops(
                 w, f, ctx, n_terms, make_vhs=mv
             )
         case "restricted", "generalized":
-            apply_trotter = lambda w, f, ctx, n_terms, mv=make_vhs: _apply_trotter_g_from_restricted(
-                w, f, ctx, n_terms, make_vhs=mv
+            apply_trotter = (
+                lambda w, f, ctx, n_terms, mv=make_vhs: _apply_trotter_g_from_restricted(
+                    w, f, ctx, n_terms, make_vhs=mv
+                )
             )
         case "generalized", "generalized":
             apply_trotter = lambda w, f, ctx, n_terms, mv=make_vhs: _apply_trotter_r(
                 w, f, ctx, n_terms, make_vhs=mv
             )
         case _:
-            raise NotImplementedError(f"Not implemented for ham_basis={ham_basis} and walker_kind={walker_kind}")
+            raise NotImplementedError(
+                f"Not implemented for ham_basis={ham_basis} and walker_kind={walker_kind}"
+            )
 
     return TrotterOps(apply_trotter)

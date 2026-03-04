@@ -110,14 +110,14 @@ class MeasKernel(Protocol):
     Measurement kernel protocol.
     """
 
-    def __call__(
-        self, walker: Any, ham_data: Any, meas_ctx: Any, trial_data: Any
-    ) -> jax.Array: ...
+    def __call__(self, walker: Any, ham_data: Any, meas_ctx: Any, trial_data: Any) -> jax.Array: ...
 
 
 # usual kernel names
 k_energy = "energy"
 k_force_bias = "force_bias"
+o_rdm1 = "rdm1"
+o_density_corr = "density_corr"
 
 
 @dataclass(frozen=True)
@@ -130,14 +130,12 @@ class MeasOps:
     overlap: OverlapFn  # (walker, trial_data) -> overlap
 
     # intermediates for measurements
-    build_meas_ctx: Callable[[ham_data, trial_data], Any] = (
-        lambda ham_data, trial_data: None
-    )
+    build_meas_ctx: Callable[[ham_data, trial_data], Any] = lambda ham_data, trial_data: None
 
     # algorithm kernels (e.g. "energy", "force_bias")
     kernels: Mapping[str, MeasKernel] = field(default_factory=dict)
 
-    # optional observables (e.g. "mixed_rdm1", "nn_corr", ...)
+    # optional observables (e.g. "rdm1", "density_corr", ...)
     observables: Mapping[str, MeasKernel] = field(default_factory=dict)
 
     def has_kernel(self, name: str) -> bool:
@@ -151,18 +149,14 @@ class MeasOps:
             return self.kernels[name]
         except KeyError as e:
             avail = ", ".join(sorted(self.kernels.keys()))
-            raise KeyError(
-                f"missing required kernel '{name}'. available: [{avail}]"
-            ) from e
+            raise KeyError(f"missing required kernel '{name}'. available: [{avail}]") from e
 
     def require_observable(self, name: str) -> MeasKernel:
         try:
             return self.observables[name]
         except KeyError as e:
             avail = ", ".join(sorted(self.observables.keys()))
-            raise KeyError(
-                f"missing requested observable '{name}'. available: [{avail}]"
-            ) from e
+            raise KeyError(f"missing requested observable '{name}'. available: [{avail}]") from e
 
     def available_kernels(self) -> tuple[str, ...]:
         return tuple(sorted(self.kernels.keys()))

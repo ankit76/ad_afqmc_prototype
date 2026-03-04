@@ -14,20 +14,14 @@ from ad_afqmc_prototype import testing
 
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
 from ad_afqmc_prototype.meas.rhf import (
-    build_meas_ctx,
-    energy_kernel_rw_rh,
-    energy_kernel_uw_rh,
-    force_bias_kernel_gw_rh,
-    force_bias_kernel_rw_rh,
-    force_bias_kernel_uw_rh,
     make_rhf_meas_ops,
 )
-from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.trial.rhf import RhfTrial, make_rhf_trial_ops
 
 
 def _make_random_rhf_trial(key, norb, nocc):
     return RhfTrial(mo_coeff=testing.rand_orthonormal_cols(key, norb, nocc))
+
 
 @pytest.mark.parametrize("walker_kind", ["restricted", "unrestricted", "generalized"])
 def test_auto_force_bias_matches_manual_rhf(walker_kind):
@@ -160,9 +154,7 @@ def test_auto_force_bias_matches_manual_rhf_generalized():
         assert jnp.allclose(v_a, v_m, rtol=1e-7, atol=1e-8), (v_a, v_m)
 
 
-def run_calc(
-    sys, meas_ops, ham_data, trial_ops, trial_data, params, block_fn, prop_ops
-):
+def run_calc(sys, meas_ops, ham_data, trial_ops, trial_data, params, block_fn, prop_ops):
     mean, err, block_e_all, block_w_all = driver.run_qmc_energy(
         sys=sys,
         params=params,

@@ -72,11 +72,7 @@ class OneDimensionalChain(Lattice):
         return (-1) ** jnp.sum(jnp.where(walker_a > 0, 1, 0))
 
     def get_symm_fac(self, pos, k):
-        return (
-            jnp.exp(2 * jnp.pi * 1.0j * k[0] * pos[0] / self.n_sites)
-            if k is not None
-            else 1.0
-        )
+        return jnp.exp(2 * jnp.pi * 1.0j * k[0] * pos[0] / self.n_sites) if k is not None else 1.0
 
     @partial(jit, static_argnums=(0,))
     def get_neighboring_bonds(self, pos):
@@ -101,9 +97,7 @@ class OneDimensionalChain(Lattice):
     # ordering is used in the ssh model
     @partial(jit, static_argnums=(0,))
     def get_nearest_neighbors(self, pos):
-        return jnp.array(
-            [((pos[0] - 1) % self.n_sites,), ((pos[0] + 1) % self.n_sites,)]
-        )
+        return jnp.array([((pos[0] - 1) % self.n_sites,), ((pos[0] + 1) % self.n_sites,)])
 
     def get_nearest_neighbor_modes(self, pos):
         return (
@@ -177,6 +171,18 @@ class OneDimensionalChain(Lattice):
                 h[nr, r] = 1
         return h
 
+    def build_pg_ops(self, parity=1.0):
+        """
+        Build symmetry operations for the 1D chain, identity and reflection.
+        """
+        n_sites = self.n_sites
+        E = np.eye(n_sites, dtype=float)
+        perm_c2 = np.arange(n_sites - 1, -1, -1)
+        U_c2 = E[:, perm_c2]
+        pg_ops = [E, U_c2]
+        pg_chars = [1.0, parity]
+        return pg_ops, pg_chars
+
     def __hash__(self):
         return hash((self.n_sites, self.shape, self.sites, self.bonds))
 
@@ -214,9 +220,7 @@ class TwoDimensionalGrid(Lattice):
         distances = [*set(distances)]
         distances.sort()
         self.shell_distances = tuple(distances)
-        self.sites = tuple(
-            [(i // self.l_x, i % self.l_x) for i in range(self.l_x * self.l_y)]
-        )
+        self.sites = tuple([(i // self.l_x, i % self.l_x) for i in range(self.l_x * self.l_y)])
 
         bond_distances = []
         for x in range(self.l_x + 1):
@@ -266,14 +270,10 @@ class TwoDimensionalGrid(Lattice):
     @partial(jit, static_argnums=(0,))
     def get_distance(self, pos_1, pos_2):
         dist_y = jnp.min(
-            jnp.array(
-                [jnp.abs(pos_1[0] - pos_2[0]), self.l_y - jnp.abs(pos_1[0] - pos_2[0])]
-            )
+            jnp.array([jnp.abs(pos_1[0] - pos_2[0]), self.l_y - jnp.abs(pos_1[0] - pos_2[0])])
         )
         dist_x = jnp.min(
-            jnp.array(
-                [jnp.abs(pos_1[1] - pos_2[1]), self.l_x - jnp.abs(pos_1[1] - pos_2[1])]
-            )
+            jnp.array([jnp.abs(pos_1[1] - pos_2[1]), self.l_x - jnp.abs(pos_1[1] - pos_2[1])])
         )
         dist = dist_x**2 + dist_y**2
         shell_number = jnp.searchsorted(jnp.array(self.shell_distances), dist)
@@ -474,9 +474,7 @@ class TriangularGrid(Lattice):
     def __post_init__(self):
         self.shape = (self.l_x, self.l_y)
         self.n_sites = self.l_x * self.l_y
-        self.sites = tuple(
-            [(i // self.l_y, i % self.l_y) for i in range(self.l_x * self.l_y)]
-        )
+        self.sites = tuple([(i // self.l_y, i % self.l_y) for i in range(self.l_x * self.l_y)])
 
     def get_site_num(self, pos):
         return pos[1] + self.l_y * pos[0]
@@ -600,9 +598,7 @@ class TriangularGrid(Lattice):
             elif boundary == "yc":
                 sub = (x + (y & 1)) % 3
             else:
-                raise ValueError(
-                    "Neel guess only implemented for XC or OXC or YC boundaries."
-                )
+                raise ValueError("Neel guess only implemented for XC or OXC or YC boundaries.")
             if sub == 0:
                 sites_0.append(site_n)
             elif sub == 1:
@@ -641,9 +637,7 @@ class TriangularGrid(Lattice):
     def get_chiral_guess(self, tilt=np.pi / 3):
         boundary = self.boundary
         if boundary not in ("xc", "oxc", "yc"):
-            raise ValueError(
-                "Chiral guess only implemented for 'xc', 'oxc' or 'yc' boundaries."
-            )
+            raise ValueError("Chiral guess only implemented for 'xc', 'oxc' or 'yc' boundaries.")
         sites_0, sites_1, sites_2 = [], [], []
         for x, y in self.sites:
             site_n = self.get_site_num((x, y))
@@ -818,9 +812,7 @@ class TriangularGrid(Lattice):
             n_up, n_dn = nelec
         else:
             if nelec % 2 != 0:
-                raise ValueError(
-                    "For scalar nelec, require even nelec for spin-balanced state."
-                )
+                raise ValueError("For scalar nelec, require even nelec for spin-balanced state.")
             n_up = n_dn = nelec // 2
 
         if n_up > N or n_dn > N:
@@ -875,9 +867,7 @@ class TriangularGrid(Lattice):
 
         boundary = self.boundary
         if boundary not in ("xc", "oxc", "yc"):
-            raise ValueError(
-                "plot_observables only implemented for 'xc', 'oxc', or 'yc'."
-            )
+            raise ValueError("plot_observables only implemented for 'xc', 'oxc', or 'yc'.")
 
         r_uu = spin_rdm1[:n_sites, :n_sites]
         r_dd = spin_rdm1[n_sites:, n_sites:]
@@ -1167,18 +1157,20 @@ class TriangularGrid(Lattice):
         pg_chars = [1.0, parity]
         return pg_ops, pg_chars
 
-    def build_pg_ops_xc(self):
+    def build_pg_ops_xc(self, irrep="A1"):
         """
         Full space-group ops for triangular XC cylinder (PBC in x, OBC in y)
         with a 2-row unit cell along x.
 
+        Parameters
+        ----------
+        irrep : str
+            One of "A1", "A2", "B1", "B2" — the four abelian irreps of D_{nx}.
+
         Returns
         -------
         pg_ops  : list of (N, N) arrays
-            All symmetry operators: {E, C2, G, C2G} * {T2^n}, n = 0..nx/2-1.
-            Total number of ops = 2 * nx.
         pg_chars: list of ints
-            Characters for the totally symmetric irrep (all +1).
         """
         nx = self.l_x
         ny = self.l_y
@@ -1186,62 +1178,73 @@ class TriangularGrid(Lattice):
         if nx % 2 != 0:
             raise ValueError("nx must be even to have a 2-row unit cell along x.")
 
+        irrep = irrep.upper()
+        if irrep not in ("A1", "A2", "B1", "B2"):
+            raise ValueError(f"Unknown abelian irrep '{irrep}'. Must be A1, A2, B1, or B2.")
+
+        #                    E*T2^n  C2*T2^n  G*T2^n  C2G*T2^n
+        # base_op index:       0        1        2        3
+        char_table = {
+            "A1": [1, 1, 1, 1],
+            "A2": [1, -1, 1, -1],
+            "B1": [1, 1, -1, -1],
+            "B2": [1, -1, -1, 1],
+        }
+        base_chars = char_table[irrep]
+
         n_sites = nx * ny
-        E = np.eye(n_sites, dtype=float)
+        E_mat = np.eye(n_sites, dtype=float)
 
         def idx(x, y):
             return (x % nx) * ny + y
 
-        # --- C2: inversion ---
-        # (x, y) -> (nx-1-x, ny-1-y)  <=>  i -> N-1-i in row-major
+        # C2: (x, y) -> (nx-1-x, ny-1-y)
         perm_c2 = np.arange(n_sites - 1, -1, -1)
-        U_c2 = E[:, perm_c2]
+        U_c2 = E_mat[:, perm_c2]
 
-        # --- Glide G: (x, y) -> (x+1, ny-1-y) ---
+        # Glide G: (x, y) -> (x+1, ny-1-y)
         perm_g = np.empty(n_sites, dtype=int)
         for x in range(nx):
             for y in range(ny):
                 i = idx(x, y)
                 perm_g[i] = idx((x + 1) % nx, ny - 1 - y)
-        U_g = E[:, perm_g]
+        U_g = E_mat[:, perm_g]
 
-        # --- T2^n: translation by 2n rows: (x, y) -> (x+2n, y) ---
+        # T2^n: (x, y) -> (x+2n, y)
         def U_t2_power(n):
             perm = np.empty(n_sites, dtype=int)
             for x in range(nx):
                 for y in range(ny):
                     i = idx(x, y)
                     perm[i] = idx((x + 2 * n) % nx, y)
-            return E[:, perm]
+            return E_mat[:, perm]
 
-        # Base (point-group) ops without translations
-        base_ops = [E, U_c2, U_g, U_c2 @ U_g]
+        # Base ops: [E, C2, G, C2*G]
+        base_ops = [E_mat, U_c2, U_g, U_c2 @ U_g]
 
         pg_ops = []
         pg_chars = []
 
-        # n = 0: just the base ops
-        for U in base_ops:
-            if not any(np.array_equal(U, V) for V in pg_ops):
-                pg_ops.append(U)
-                pg_chars.append(1)
-
-        # n = 1 .. nx/2-1: T2^n and its products with base ops
         maxn = nx // 2
-        for n in range(1, maxn):
-            U_tn = U_t2_power(n)
-            for U0 in base_ops:
+        for n in range(maxn):
+            U_tn = U_t2_power(n) if n > 0 else E_mat
+            for j, U0 in enumerate(base_ops):
                 U = U0 @ U_tn
                 if not any(np.array_equal(U, V) for V in pg_ops):
                     pg_ops.append(U)
-                    pg_chars.append(1)
+                    pg_chars.append(base_chars[j])
 
         return pg_ops, pg_chars
 
-    def build_pg_ops_yc(self):
+    def build_pg_ops_yc(self, irrep="A1"):
         """
         Full space-group ops for triangular YC cylinder (PBC in x, OBC in y)
         with a 1-row unit cell along x.
+
+        Parameters
+        ----------
+        irrep : str
+            One of "A1", "A2", "B1", "B2" — the four abelian irreps of D_{2*nx}.
 
         Returns
         -------
@@ -1249,71 +1252,83 @@ class TriangularGrid(Lattice):
             All symmetry operators: {E, C2, G, C2G} * {T^n}, n = 0..nx-1.
             Total number of ops = 4 * nx.
         pg_chars: list of ints
-            Characters for the totally symmetric irrep (all +1).
         """
         nx = self.l_x
         ny = self.l_y
         n_sites = nx * ny
 
-        E = np.eye(n_sites, dtype=float)
+        irrep = irrep.upper()
+        if irrep not in ("A1", "A2", "B1", "B2"):
+            raise ValueError(f"Unknown abelian irrep '{irrep}'. Must be A1, A2, B1, or B2.")
+
+        # G^2 = T, so G has order 2*nx -> group is D_{2*nx}
+        # Base ops: [E, C2, G, C2*G]
+        # E*T^n  = G^{2n}     : rotation, even G-power
+        # C2*T^n = C2*G^{2n}  : reflection, even G-power
+        # G*T^n  = G^{2n+1}   : rotation, odd G-power
+        # C2G*T^n = C2*G^{2n+1}: reflection, odd G-power
+        #
+        #                  E*T^n  C2*T^n  G*T^n  C2G*T^n
+        char_table = {
+            "A1": [1, 1, 1, 1],
+            "A2": [1, -1, 1, -1],
+            "B1": [1, 1, -1, -1],
+            "B2": [1, -1, -1, 1],
+        }
+        base_chars = char_table[irrep]
+
+        E_mat = np.eye(n_sites, dtype=float)
 
         def idx(x, y):
             return (x % nx) * ny + y
 
-        # --- C2: inversion ---
+        # C2: (x, y) -> (nx-1-x, ny-1-y)
         perm_c2 = np.arange(n_sites - 1, -1, -1)
-        U_c2 = E[:, perm_c2]
+        U_c2 = E_mat[:, perm_c2]
 
-        # --- Glide G (YC) ---
+        # Glide G (YC): (x, y) -> (x + [1 if y even else 0], ny-1-y)
         perm_g = np.empty(n_sites, dtype=int)
         for x in range(nx):
             for y in range(ny):
                 i = idx(x, y)
-                if y % 2 == 0:  # even column
+                if y % 2 == 0:
                     xp = (x + 1) % nx
-                else:  # odd column
+                else:
                     xp = x
                 yp = ny - 1 - y
                 perm_g[i] = idx(xp, yp)
-        U_g = E[:, perm_g]
+        U_g = E_mat[:, perm_g]
 
-        # --- T^n: translation by n rows: (x, y) -> (x + n, y) ---
+        # T^n: (x, y) -> (x + n, y)
         def U_t_power(n):
             perm = np.empty(n_sites, dtype=int)
             for x in range(nx):
                 for y in range(ny):
                     i = idx(x, y)
                     perm[i] = idx(x + n, y)
-            return E[:, perm]
+            return E_mat[:, perm]
 
-        # Base (point-group) ops without translations
-        base_ops = [E, U_c2, U_g, U_c2 @ U_g]
+        # Base ops: [E, C2, G, C2*G]
+        base_ops = [E_mat, U_c2, U_g, U_c2 @ U_g]
 
         pg_ops = []
         pg_chars = []
 
-        # n = 0: just the base ops
-        for U in base_ops:
-            if not any(np.array_equal(U, V) for V in pg_ops):
-                pg_ops.append(U)
-                pg_chars.append(1)
-
-        # n = 1 .. nx-1: T^n and its products with base ops
-        for n in range(1, nx):
-            U_tn = U_t_power(n)
-            for U0 in base_ops:
+        for n in range(nx):
+            U_tn = U_t_power(n) if n > 0 else E_mat
+            for j, U0 in enumerate(base_ops):
                 U = U0 @ U_tn
                 if not any(np.array_equal(U, V) for V in pg_ops):
                     pg_ops.append(U)
-                    pg_chars.append(1)
+                    pg_chars.append(base_chars[j])
 
         return pg_ops, pg_chars
 
-    def build_pg_ops(self):
+    def build_pg_ops(self, irrep="A1"):
         if self.boundary in "xc":
-            return self.build_pg_ops_xc()
+            return self.build_pg_ops_xc(irrep=irrep)
         elif self.boundary == "yc":
-            return self.build_pg_ops_yc()
+            return self.build_pg_ops_yc(irrep=irrep)
         elif self.boundary == "oxc":
             return self.build_pg_ops_oxc(parity=1.0)
         else:
@@ -1355,7 +1370,7 @@ class TriangularGrid(Lattice):
         for x in range(nx):
             for y in range(ny):
                 perm_g[idx(x, y)] = idx((x + 1) % nx, ny - 1 - y)
-        U_g = E[:, perm_g]
+        _ = E[:, perm_g]
 
         step = nx // 2
         perm_a = np.empty(n_sites, dtype=int)
@@ -1456,9 +1471,7 @@ class TriangularGrid(Lattice):
         if nx % 2 != 0:
             raise ValueError("nx must be even for this D_{2N} YC lattice.")
         if ny % 2 != 0:
-            print(
-                "Warning: ny is odd; C2 may not be an exact symmetry of this YC cluster."
-            )
+            print("Warning: ny is odd; C2 may not be an exact symmetry of this YC cluster.")
 
         def idx(x, y):
             return x * ny + y
@@ -1647,19 +1660,13 @@ class ThreeDimensionalGrid(Lattice):
 
     def get_distance(self, pos_1, pos_2):
         dist_z = jnp.min(
-            jnp.array(
-                [jnp.abs(pos_1[0] - pos_2[0]), self.l_z - jnp.abs(pos_1[0] - pos_2[0])]
-            )
+            jnp.array([jnp.abs(pos_1[0] - pos_2[0]), self.l_z - jnp.abs(pos_1[0] - pos_2[0])])
         )
         dist_y = jnp.min(
-            jnp.array(
-                [jnp.abs(pos_1[1] - pos_2[1]), self.l_y - jnp.abs(pos_1[1] - pos_2[1])]
-            )
+            jnp.array([jnp.abs(pos_1[1] - pos_2[1]), self.l_y - jnp.abs(pos_1[1] - pos_2[1])])
         )
         dist_x = jnp.min(
-            jnp.array(
-                [jnp.abs(pos_1[2] - pos_2[2]), self.l_x - jnp.abs(pos_1[2] - pos_2[2])]
-            )
+            jnp.array([jnp.abs(pos_1[2] - pos_2[2]), self.l_x - jnp.abs(pos_1[2] - pos_2[2])])
         )
         dist = dist_x**2 + dist_y**2 + dist_z**2
         shell_number = jnp.searchsorted(jnp.array(self.shell_distances), dist)

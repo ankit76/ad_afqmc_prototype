@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -45,7 +44,7 @@ class CisdTrial:
 
     @classmethod
     def tree_unflatten(cls, aux, children):
-        (ci1, ci2) = children
+        ci1, ci2 = children
         return cls(
             ci1=ci1,
             ci2=ci2,
@@ -72,9 +71,7 @@ def overlap_r(walker: jax.Array, trial_data: CisdTrial) -> jax.Array:
 
     x = green[:, nocc:]  # (nocc, nvir)
     o1 = jnp.einsum("ia,ia->", ci1, x)
-    o2 = 2.0 * jnp.einsum("iajb,ia,jb->", ci2, x, x) - jnp.einsum(
-        "iajb,ib,ja->", ci2, x, x
-    )
+    o2 = 2.0 * jnp.einsum("iajb,ia,jb->", ci2, x, x) - jnp.einsum("iajb,ib,ja->", ci2, x, x)
 
     return (1.0 + 2.0 * o1 + o2) * o0
 
@@ -87,6 +84,12 @@ def make_cisd_trial_ops(sys: System) -> TrialOps:
             f"CISD trial currently supports only restricted walkers, got: {sys.walker_kind}"
         )
     return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1)
+
+
+def make_cisd_trial_data(data: dict, sys: System) -> CisdTrial:
+    ci1 = jnp.asarray(data["ci1"])
+    ci2 = jnp.asarray(data["ci2"])
+    return CisdTrial(ci1, ci2)
 
 
 def slice_trial_level(trial: CisdTrial, nvir_keep: int | None) -> CisdTrial:

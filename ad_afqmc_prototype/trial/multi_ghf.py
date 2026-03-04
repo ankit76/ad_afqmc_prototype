@@ -48,7 +48,7 @@ class MultiGhfTrial:
 
     @classmethod
     def tree_unflatten(cls, aux, children):
-        (green_real_dtype, green_complex_dtype) = aux
+        green_real_dtype, green_complex_dtype = aux
         ci_coeffs, mo_coeffs = children
         return cls(
             ci_coeffs=ci_coeffs,
@@ -84,9 +84,7 @@ def get_rdm1(trial_data: MultiGhfTrial) -> jax.Array:
     return jnp.stack([dm_u, dm_d], axis=0)
 
 
-def overlap_u(
-    walker: tuple[jax.Array, jax.Array], trial_data: MultiGhfTrial
-) -> jax.Array:
+def overlap_u(walker: tuple[jax.Array, jax.Array], trial_data: MultiGhfTrial) -> jax.Array:
     """
     Overlap for unrestricted walker: W = (W_up, W_dn)
     """
@@ -199,9 +197,7 @@ def calc_overlap_ratio(
     i_eff, j_eff = _eff_idx(update_indices, norb)
     u0, u1 = update_constants[0], update_constants[1]
 
-    r_k = jax.vmap(lambda G: _ratio_full_rank2(G, i_eff, j_eff, u0, u1), in_axes=0)(
-        G_states
-    )
+    r_k = jax.vmap(lambda G: _ratio_full_rank2(G, i_eff, j_eff, u0, u1), in_axes=0)(G_states)
 
     w_old = jnp.sum(w_states)
     w_new = jnp.sum(w_states * r_k)
@@ -225,18 +221,12 @@ def update_green(
 
     norb = G_states.shape[-1] // 2
     i_eff, j_eff = _eff_idx(update_indices, norb)
-    u0, u1 = update_constants[0].astype(G_states.dtype), update_constants[1].astype(
-        G_states.dtype
-    )
+    u0, u1 = update_constants[0].astype(G_states.dtype), update_constants[1].astype(G_states.dtype)
 
-    r_k = jax.vmap(lambda G: _ratio_full_rank2(G, i_eff, j_eff, u0, u1), in_axes=0)(
-        G_states
-    )
+    r_k = jax.vmap(lambda G: _ratio_full_rank2(G, i_eff, j_eff, u0, u1), in_axes=0)(G_states)
 
     G_new = jax.vmap(
-        lambda G, r: _update_full_rank2(
-            G, i_eff, j_eff, u0, u1, eps=1.0e-8, sanitize=True
-        ),
+        lambda G, r: _update_full_rank2(G, i_eff, j_eff, u0, u1, eps=1.0e-8, sanitize=True),
         in_axes=(0, 0),
     )(G_states, r_k)
 
@@ -349,9 +339,7 @@ def _make_beta_grid(n_beta: int) -> tuple[jax.Array, jax.Array]:
     return beta_vals, w_beta
 
 
-def _rotate_spin_trial(
-    mo: jax.Array, *, norb: int, beta: jax.Array, alpha: jax.Array
-) -> jax.Array:
+def _rotate_spin_trial(mo: jax.Array, *, norb: int, beta: jax.Array, alpha: jax.Array) -> jax.Array:
     """
     Apply the (beta, alpha) spin rotation to a GHF ket
     """
@@ -387,9 +375,7 @@ def _build_pg_s2_expansion(
     # mo grid: (n_beta, n_alpha, n_pg, 2n, ne)
     mo_grid = jax.vmap(
         lambda b: jax.vmap(
-            lambda a: jax.vmap(
-                lambda C: _rotate_spin_trial(C, norb=norb, beta=b, alpha=a)
-            )(mo_pg)
+            lambda a: jax.vmap(lambda C: _rotate_spin_trial(C, norb=norb, beta=b, alpha=a))(mo_pg)
         )(alpha_vals)
     )(beta_vals)
 
@@ -397,18 +383,16 @@ def _build_pg_s2_expansion(
     n_alpha = alpha_vals.shape[0]
     w_alpha_vec = jnp.full((n_alpha,), w_alpha, dtype=ci_pg.dtype)  # (n_alpha,)
 
-    ci_grid = (w_beta[:, None, None] * w_alpha_vec[None, :, None]) * ci_pg[
-        None, None, :
-    ]
+    ci_grid = (w_beta[:, None, None] * w_alpha_vec[None, :, None]) * ci_pg[None, None, :]
     ci_coeffs = ci_grid.reshape((-1,))
     return mo_coeffs, ci_coeffs
 
 
 def _apply_k_projection(
-    mo_coeffs: jax.Array, ci_coeffs: jax.Array
+    mo_coeffs: jax.Array, ci_coeffs: jax.Array, parity: int = 1
 ) -> tuple[jax.Array, jax.Array]:
     mo_all = jnp.concatenate([mo_coeffs, jnp.conj(mo_coeffs)], axis=0)
-    ci_all = jnp.concatenate([ci_coeffs, jnp.conj(ci_coeffs)], axis=0)
+    ci_all = jnp.concatenate([ci_coeffs, parity * jnp.conj(ci_coeffs)], axis=0)
     return mo_all, ci_all
 
 
@@ -446,6 +430,7 @@ def build_multi_ghf_expansion(
     n_beta: int | None = None,
     auto_grid: bool = False,
     k_projection: bool = False,
+    k_parity: int = 1,
     # optional convergence selection
     ham_data: Any | None = None,
     rdm1: jax.Array | None = None,
@@ -509,11 +494,9 @@ def build_multi_ghf_expansion(
         for n_alpha, n_beta in candidate_grids:
             a = _make_alpha_grid(n_alpha)
             b = _make_beta_grid(n_beta)
-            mo_coeffs_tmp, ci_tmp = _build_pg_s2_expansion(
-                mo_pg, ci_pg, a, b, norb=norb
-            )
+            mo_coeffs_tmp, ci_tmp = _build_pg_s2_expansion(mo_pg, ci_pg, a, b, norb=norb)
             if k_projection:
-                mo_coeffs_tmp, ci_tmp = _apply_k_projection(mo_coeffs_tmp, ci_tmp)
+                mo_coeffs_tmp, ci_tmp = _apply_k_projection(mo_coeffs_tmp, ci_tmp, parity=k_parity)
 
             E = energy_fn((wu, wd), ham_data, mo_coeffs_tmp, ci_tmp)
             Es.append(float(E))
@@ -549,7 +532,7 @@ def build_multi_ghf_expansion(
 
     # k projection
     if k_projection:
-        mo_coeffs, ci_coeffs = _apply_k_projection(mo_coeffs, ci_coeffs)
+        mo_coeffs, ci_coeffs = _apply_k_projection(mo_coeffs, ci_coeffs, parity=k_parity)
 
     print(f"Final multi-GHF expansion: {ci_coeffs.shape[0]} determinants.")
 

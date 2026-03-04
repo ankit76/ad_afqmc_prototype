@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Any, Literal
-
 import jax
 import jax.numpy as jnp
-from jax import tree_util
 
 from ..core.ops import TrialOps
 from ..core.system import System
 from . import eom_cisd
 from .eom_cisd import EomCisdTrial
+
 
 def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     ci1 = trial_data.ci1
@@ -18,18 +15,18 @@ def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     r1 = trial_data.r1
     r2 = trial_data.r2
     nocc = trial_data.nocc
-    
+
     wocc = walker[:nocc, :]  # (nocc, nocc)
     green = jnp.linalg.solve(wocc.T, walker.T)  # (nocc, norb)
     green_occ = green[:, nocc:]
-    
+
     det0 = jnp.linalg.det(wocc)
     o0 = det0 * det0
 
     # r1 terms
     # r1 1
     r1g = 2 * jnp.einsum("pt,pt", r1, green_occ)
-    r1_1 = r1g 
+    r1_1 = r1g
     # r1 c1
     c1g = 2 * jnp.einsum("pt,pt", ci1, green_occ)
     r1_c1_1 = r1g * c1g
@@ -63,6 +60,7 @@ def overlap_r(walker: jax.Array, trial_data: EomCisdTrial) -> jax.Array:
     r2_c1 = r2_c1_1 + r2_c1_2
 
     return (r1_1 + r1_c1 + r1_c2 + r2_1 + r2_c1) * o0
+
 
 def make_eom_t_cisd_trial_ops(sys: System) -> TrialOps:
     if sys.nup != sys.ndn:

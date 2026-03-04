@@ -77,9 +77,7 @@ def test_apply_chunked_prop_matches_vmap_array(n_chunks: int):
     def prop_one(walker, field_i, mat):
         return walker + (0.1 * field_i[0]) * (mat @ walker)
 
-    out_chunked = wk.vmap_chunked(prop_one, n_chunks, in_axes=(0, 0, None))(
-        w, fields, mat
-    )
+    out_chunked = wk.vmap_chunked(prop_one, n_chunks, in_axes=(0, 0, None))(w, fields, mat)
     out_vmap = jax.vmap(lambda wi, fi: prop_one(wi, fi, mat))(w, fields)
 
     assert out_chunked.shape == out_vmap.shape
@@ -102,12 +100,10 @@ def test_apply_chunked_prop_matches_vmap_unrestricted(n_chunks: int):
         s = 0.05 * field_i[1]
         return (wu_i + s * (mat @ wu_i), wd_i - s * (mat @ wd_i))
 
-    out_chunked = wk.vmap_chunked(prop_one, n_chunks, in_axes=(0, 0, None))(
-        (wu, wd), fields, mat
+    out_chunked = wk.vmap_chunked(prop_one, n_chunks, in_axes=(0, 0, None))((wu, wd), fields, mat)
+    out_vmap_u, out_vmap_d = jax.vmap(lambda a, b, f: prop_one((a, b), f, mat), in_axes=(0, 0, 0))(
+        wu, wd, fields
     )
-    out_vmap_u, out_vmap_d = jax.vmap(
-        lambda a, b, f: prop_one((a, b), f, mat), in_axes=(0, 0, 0)
-    )(wu, wd, fields)
 
     assert isinstance(out_chunked, tuple) and len(out_chunked) == 2
     assert out_chunked[0].shape == out_vmap_u.shape

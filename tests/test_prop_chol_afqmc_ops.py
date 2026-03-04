@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 
 from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.prop.chol_afqmc_ops import _build_prop_ctx, make_trotter_ops
+from ad_afqmc_prototype.prop.chol_afqmc_ops import _build_prop_ctx
 
 
 def _make_small_ham(*, norb=4, n_fields=3, h0=0.0, seed=0):

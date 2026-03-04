@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-from jax import lax, tree_util
 
-from ..core.levels import LevelPack, LevelSpec
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
-from ..ham.chol import HamChol, slice_ham_level
-from ..trial.cis import CisTrial
-from ..trial.cis import overlap_r
+from ..ham.chol import HamChol
+from ..trial.cis import CisTrial, overlap_r
 from . import cisd
 from .cisd import CisdMeasCtx
-from .cisd import _greens_restricted
 
 
 def force_bias_kernel_rw_rh(
@@ -45,6 +40,7 @@ def force_bias_kernel_rw_rh(
     overlap = overlap_1
 
     return fb_1 / overlap
+
 
 def energy_kernel_rw_rh(
     walker: jax.Array, ham_data: HamChol, meas_ctx: CisdMeasCtx, trial_data: CisTrial
@@ -105,6 +101,7 @@ def energy_kernel_rw_rh(
     overlap = overlap_1
     return (e1 + e2) / overlap + e0
 
+
 def make_cis_meas_ops(sys: System) -> MeasOps:
     if sys.walker_kind.lower() != "restricted":
         raise ValueError(
@@ -113,8 +110,6 @@ def make_cis_meas_ops(sys: System) -> MeasOps:
 
     return MeasOps(
         overlap=overlap_r,
-        build_meas_ctx=lambda ham_data, trial_data: cisd.build_meas_ctx(
-            ham_data, trial_data
-        ),
+        build_meas_ctx=lambda ham_data, trial_data: cisd.build_meas_ctx(ham_data, trial_data),
         kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
     )

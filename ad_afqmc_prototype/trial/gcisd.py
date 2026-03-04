@@ -22,6 +22,7 @@ class GcisdTrial:
       c1: (nocc, nvir)                singles coefficients c_{i a}
       c2: (nocc, nvir, nocc, nvir)    doubles coefficients c_{i a j b}
     """
+
     mo_coeff: jax.Array
     c1: jax.Array
     c2: jax.Array
@@ -58,17 +59,19 @@ class GcisdTrial:
             c2=c2,
         )
 
+
 def get_rdm1(trial_data: GcisdTrial) -> jax.Array:
     c = trial_data.mo_coeff
     nocc = trial_data.nocc
-    dm = c[:,:nocc] @ c[:,:nocc].conj().T  # (2*norb, 2*norb)
+    dm = c[:, :nocc] @ c[:, :nocc].conj().T  # (2*norb, 2*norb)
     return dm
+
 
 def overlap_g(walker: jax.Array, trial_data: GcisdTrial) -> jax.Array:
     nocc = trial_data.nocc
     c1 = trial_data.c1
     c2 = trial_data.c2
-    g =  (walker @ jnp.linalg.inv(walker[:nocc, :])).T
+    g = (walker @ jnp.linalg.inv(walker[:nocc, :])).T
     o0 = jnp.linalg.det(walker[:nocc, :])
     o1 = jnp.einsum("ia,ia", c1.conj(), g[:, nocc:])
     o2 = 2.0 * jnp.einsum("iajb, ia, jb", c2.conj(), g[:, nocc:], g[:, nocc:])
@@ -79,13 +82,27 @@ def overlap_g(walker: jax.Array, trial_data: GcisdTrial) -> jax.Array:
 def make_gcisd_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
-    if wk == "restricted":
-        raise NotImplementedError
+    print(wk)
+    if wk == "restricted" or wk == "unrestricted":
+        raise NotImplementedError("GCISD trial is only implemented for generalized walkers.")
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        get_rdm1_fn = get_rdm1
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        raise NotImplementedError
+    return TrialOps(
+        overlap=overlap_fn,
+        get_rdm1=get_rdm1_fn,
+    )
 
-    if wk == "generalized":
-        return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+def make_gcisd_trial_data(data: dict, sys: System) -> GcisdTrial:
+    ci1 = jnp.asarray(data["ci1"])
+    ci2 = jnp.asarray(data["ci2"])
+    mo = jnp.asarray(data["mo_coeff"])
+    return GcisdTrial(
+        mo_coeff=mo,
+        c1=ci1,
+        c2=ci2,
+    )

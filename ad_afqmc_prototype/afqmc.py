@@ -31,7 +31,7 @@ def banner_afqmc() -> str:
 ██╔══██║██║  ██║╚════╝██╔══██║██╔══╝  ██║▄▄ ██║██║╚██╔╝██║██║
 ██║  ██║██████╔╝      ██║  ██║██║     ╚██████╔╝██║ ╚═╝ ██║╚██████╗
 ╚═╝  ╚═╝╚═════╝       ╚═╝  ╚═╝╚═╝      ╚══▀▀═╝ ╚═╝     ╚═╝ ╚═════╝
-     differentiable auxiliary-field quantum Monte Carlo 
+     differentiable auxiliary-field quantum Monte Carlo
 """
 
 
@@ -103,9 +103,7 @@ class AFQMC:
         self.dt = params.dt if dt is None else dt
         self.n_walkers = params.n_walkers if n_walkers is None else n_walkers
         self.n_blocks = params.n_blocks if n_blocks is None else n_blocks
-        self.n_eql_blocks = (
-            params.n_eql_blocks if n_eql_blocks is None else n_eql_blocks
-        )
+        self.n_eql_blocks = params.n_eql_blocks if n_eql_blocks is None else n_eql_blocks
         self.seed = params.seed if seed is None else seed
         self.n_chunks = params.n_chunks if n_chunks is None else n_chunks
 
@@ -118,7 +116,6 @@ class AFQMC:
         self.block_energies: Any = None
         self.block_weights: Any = None
 
-
     @property
     def staged(self) -> Optional[StagedInputs]:
         return self._staged
@@ -130,7 +127,6 @@ class AFQMC:
     def dump_flags(self, job) -> None:
         meta = job.staged.meta
         src = meta["source_kind"]
-        norb_frozen = meta["norb_frozen"]
         chol_cut = meta["chol_cut"]
         sys = job.sys
         nchol = job.staged.ham.chol.shape[0]
@@ -180,7 +176,7 @@ class AFQMC:
 
         staged = stage_inputs(
             self._obj,
-            norb_frozen=self.norb_frozen,
+            norb_frozen=self.norb_frozen if self.norb_frozen is not None else 0,
             chol_cut=self.chol_cut,
             cache=self.cache,
             overwrite=self.overwrite_cache if self.cache is not None else False,
@@ -196,7 +192,7 @@ class AFQMC:
         staged = self.stage()
         dump_staged(staged, path)
 
-    #def load_staged(self, path: Union[str, Path]): -> StagedInputs:
+    # def load_staged(self, path: Union[str, Path]): -> StagedInputs:
     #    """Load staged inputs from a cache file and attach them to this object."""
     #    staged = load_staged(path)
     #    self._staged = staged
@@ -278,9 +274,7 @@ class AFQMC:
             block_e = out[2] if len(out) > 2 else None
             block_w = out[3] if len(out) > 3 else None
         else:
-            raise TypeError(
-                "Unexpected return from Job.kernel(), expected tuple output."
-            )
+            raise TypeError("Unexpected return from Job.kernel(), expected tuple output.")
 
         self.e_tot = e_tot
         self.e_err = e_err
@@ -289,6 +283,7 @@ class AFQMC:
         return e_tot, e_err
 
     run = kernel
+
 
 def from_staged(
     path: Union[str, Path],

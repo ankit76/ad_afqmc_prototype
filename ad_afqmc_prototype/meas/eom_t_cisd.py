@@ -1,24 +1,32 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
-from jax import lax, tree_util
+from jax import lax
 
-from ..core.levels import LevelPack, LevelSpec
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
-from ..ham.chol import HamChol, slice_ham_level
-from ..trial.eom_cisd import EomCisdTrial
-from ..trial.eom_cisd import overlap_r
+from ..ham.chol import HamChol
+from ..trial.cisd import CisdTrial
+from ..trial.eom_cisd import EomCisdTrial, overlap_r
 from . import cisd
-from .cisd import CisdMeasCtx
-from .cisd import _greens_restricted
+from .cisd import CisdMeasCtx, _greens_restricted
+
+
+def _build_meas_ctx_eom_t(
+    ham_data: HamChol, trial_data: EomCisdTrial, cfg: cisd.CisdMeasCfg
+) -> CisdMeasCtx:
+    # EOM-T CISD trial carries the same CI tensors needed by CISD measurement context.
+    return cisd.build_meas_ctx(ham_data, cast(CisdTrial, trial_data), cfg)
 
 
 def force_bias_kernel_rw_rh(
-    walker: jax.Array, ham_data: HamChol, meas_ctx: CisdMeasCtx, trial_data: EomCisdTrial
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: CisdMeasCtx,
+    trial_data: EomCisdTrial,
 ) -> jax.Array:
     c1 = trial_data.ci1
     c2 = trial_data.ci2
@@ -123,8 +131,12 @@ def force_bias_kernel_rw_rh(
     fb = (fb_r1 + fb_r1c1 + fb_r2 + fb_r2c1 + fb_r1c2) / overlap
     return fb
 
+
 def energy_kernel_rw_rh(
-    walker: jax.Array, ham_data: HamChol, meas_ctx: CisdMeasCtx, trial_data: EomCisdTrial
+    walker: jax.Array,
+    ham_data: HamChol,
+    meas_ctx: CisdMeasCtx,
+    trial_data: EomCisdTrial,
 ) -> jax.Array:
     c1 = trial_data.ci1
     c2 = trial_data.ci2
@@ -349,9 +361,7 @@ def energy_kernel_rw_rh(
         lr2_c1 = (lr2 @ green_occ.T) @ c1
         c1_lr2 = c1_g @ lr2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r2c1_2 = -2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lr2_c1 + c1_lr2, optimize="optimal"
-        )
+        l2r2c1_2 = -2.0 * jnp.einsum("tp,pt", gp_l_g_i, lr2_c1 + c1_lr2, optimize="optimal")
         l2r2c1 = l2r2c1_1 + l2r2c1_2
         carry[3] += l2r2c1
 
@@ -389,9 +399,7 @@ def energy_kernel_rw_rh(
         lc2_r1 = (lc2 @ green_occ.T) @ r1
         r1_lc2 = r1_g @ lc2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r1c2_2 = -2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lc2_r1 + r1_lc2, optimize="optimal"
-        )
+        l2r1c2_2 = -2.0 * jnp.einsum("tp,pt", gp_l_g_i, lc2_r1 + r1_lc2, optimize="optimal")
         l2r1c2 = l2r1c2_1 + l2r1c2_2
         carry[4] += l2r1c2
 
@@ -432,6 +440,7 @@ def energy_kernel_rw_rh(
     overlap = r1g + r1c1 + r2g2 + r2c1 + r1c2  # + r2c2
     return (e1 + e2) / overlap + e0
 
+
 def make_eom_t_cisd_meas_ops(
     sys: System,
     mixed_precision: bool = True,
@@ -443,7 +452,7 @@ def make_eom_t_cisd_meas_ops(
         )
 
     cfg = cisd.CisdMeasCfg(
-        memory_mode=None,
+        memory_mode="low",
         mixed_real_dtype=jnp.float32 if mixed_precision else jnp.float64,
         mixed_complex_dtype=jnp.complex64 if mixed_precision else jnp.complex128,
         mixed_real_dtype_testing=jnp.float64 if testing else jnp.float32,
@@ -452,9 +461,8 @@ def make_eom_t_cisd_meas_ops(
 
     return MeasOps(
         overlap=overlap_r,
-        build_meas_ctx=lambda ham_data, trial_data: cisd.build_meas_ctx(
+        build_meas_ctx=lambda ham_data, trial_data: _build_meas_ctx_eom_t(
             ham_data, trial_data, cfg
         ),
         kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
     )
-

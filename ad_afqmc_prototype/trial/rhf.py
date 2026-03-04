@@ -70,12 +70,24 @@ def make_rhf_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
     if wk == "restricted":
-        return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1)
+        overlap_fn = overlap_r
+        get_rdm1_fn = get_rdm1
+    elif wk == "unrestricted":
+        overlap_fn = overlap_u
+        get_rdm1_fn = get_rdm1
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        get_rdm1_fn = get_rdm1
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        return TrialOps(overlap=overlap_u, get_rdm1=get_rdm1)
+    return TrialOps(
+        overlap=overlap_fn,
+        get_rdm1=get_rdm1_fn,
+    )
 
-    if wk == "generalized":
-        return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
 
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+def make_rhf_trial_data(data: dict, sys: System) -> RhfTrial:
+    mo = jnp.asarray(data["mo"])
+    mo_occ = mo[:, : sys.nup]
+    return RhfTrial(mo_occ)

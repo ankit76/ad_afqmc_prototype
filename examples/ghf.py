@@ -1,4 +1,4 @@
-from pyscf import cc, gto, scf
+from pyscf import gto, scf
 
 from ad_afqmc_prototype.afqmc import AFQMC
 

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
-from jax import lax, tree_util
+from jax import lax
 
-from ..core.levels import LevelPack, LevelSpec
 from ..core.ops import MeasOps, k_energy, k_force_bias
 from ..core.system import System
-from ..ham.chol import HamChol, slice_ham_level
-from ..trial.eom_cisd import EomCisdTrial
-from ..trial.eom_cisd import overlap_r
+from ..ham.chol import HamChol
+from ..trial.cisd import CisdTrial
+from ..trial.eom_cisd import EomCisdTrial, overlap_r
 from . import cisd
-from .cisd import CisdMeasCtx
-from .cisd import _greens_restricted
+from .cisd import CisdMeasCtx, _greens_restricted
+
+
+def _build_meas_ctx_eom(
+    ham_data: HamChol, trial_data: EomCisdTrial, cfg: cisd.CisdMeasCfg
+) -> CisdMeasCtx:
+    # EOM CISD trial carries the same CI tensors needed by CISD measurement context.
+    return cisd.build_meas_ctx(ham_data, cast(CisdTrial, trial_data), cfg)
 
 
 def force_bias_kernel_rw_rh(
@@ -159,6 +164,7 @@ def force_bias_kernel_rw_rh(
     overlap = r1g + r1c1 + r2g2 + r2c1 + r1c2 + r2c2
     fb = (fb_r1 + fb_r1c1 + fb_r2 + fb_r2c1 + fb_r1c2 + fb_r2c2) / overlap
     return fb
+
 
 def energy_kernel_rw_rh(
     walker: jax.Array, ham_data: HamChol, meas_ctx: CisdMeasCtx, trial_data: EomCisdTrial
@@ -419,9 +425,7 @@ def energy_kernel_rw_rh(
         lr2_c1 = (lr2 @ green_occ.T) @ c1
         c1_lr2 = c1_g @ lr2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r2c1_2 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lr2_c1 + c1_lr2, optimize="optimal"
-        )
+        l2r2c1_2 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, lr2_c1 + c1_lr2, optimize="optimal")
         l2r2c1 = l2r2c1_1 + l2r2c1_2
         carry[3] += l2r2c1
 
@@ -459,9 +463,7 @@ def energy_kernel_rw_rh(
         lc2_r1 = (lc2 @ green_occ.T) @ r1
         r1_lc2 = r1_g @ lc2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r1c2_2 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lc2_r1 + r1_lc2, optimize="optimal"
-        )
+        l2r1c2_2 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, lc2_r1 + r1_lc2, optimize="optimal")
         l2r1c2 = l2r1c2_1 + l2r1c2_2
         carry[4] += l2r1c2
 
@@ -482,25 +484,17 @@ def energy_kernel_rw_rh(
         lr2_g = lr2 @ green_occ.T
         lr2_c2g = lr2_g @ c2g
         # 2: spin, 2: permutaion, 0.5: coulomb
-        l2r2c2_2_1 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lr2_c2g, optimize="optimal"
-        )
+        l2r2c2_2_1 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, lr2_c2g, optimize="optimal")
         c2g_lr2 = c2g_g @ lr2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r2c2_2_2 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, c2g_lr2, optimize="optimal"
-        )
+        l2r2c2_2_2 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, c2g_lr2, optimize="optimal")
         lc2_g = lc2 @ green_occ.T
         lc2_r2g = lc2_g @ r2g
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r2c2_2_3 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, lc2_r2g, optimize="optimal"
-        )
+        l2r2c2_2_3 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, lc2_r2g, optimize="optimal")
         r2g_lc2 = r2g_g @ lc2
         # 2: spin, 2: permutation, 0.5: coulomb
-        l2r2c2_2_4 = 2.0 * jnp.einsum(
-            "tp,pt", gp_l_g_i, r2g_lc2, optimize="optimal"
-        )
+        l2r2c2_2_4 = 2.0 * jnp.einsum("tp,pt", gp_l_g_i, r2g_lc2, optimize="optimal")
         l2r2c2_2 = l2r2c2_2_1 + l2r2c2_2_2 + l2r2c2_2_3 + l2r2c2_2_4
 
         # 4: spin, 0.5: coulomb, 0.5: r2, 4: permutation
@@ -593,12 +587,10 @@ def energy_kernel_rw_rh(
         return carry, 0.0
 
     l2g = jnp.zeros((nvir, nocc)) + 0.0j
-    [e2_r2_3, e2_c2_3, e2_r1c1_3, e2_r2c1_3, e2_r1c2_3, e2_r2c2_3, l2g], _ = (
-        lax.scan(
-            loop_over_chol,
-            [0.0j, 0.0j, 0.0j, 0.0j, 0.0j, 0.0j, l2g],
-            (chol, lg, l_g),
-        )
+    [e2_r2_3, e2_c2_3, e2_r1c1_3, e2_r2c1_3, e2_r1c2_3, e2_r2c2_3, l2g], _ = lax.scan(
+        loop_over_chol,
+        [0.0j, 0.0j, 0.0j, 0.0j, 0.0j, 0.0j, l2g],
+        (chol, lg, l_g),
     )
     e2_r2_2 = -2.0 * jnp.einsum("tp,pt->", l2g, r2g, optimize="optimal")
     e2_r2 = e2_r2_1 + e2_r2_2 + e2_r2_3
@@ -650,7 +642,7 @@ def make_eom_cisd_meas_ops(
         )
 
     cfg = cisd.CisdMeasCfg(
-        memory_mode=None,
+        memory_mode="low",
         mixed_real_dtype=jnp.float32 if mixed_precision else jnp.float64,
         mixed_complex_dtype=jnp.complex64 if mixed_precision else jnp.complex128,
         mixed_real_dtype_testing=jnp.float64 if testing else jnp.float32,
@@ -659,9 +651,6 @@ def make_eom_cisd_meas_ops(
 
     return MeasOps(
         overlap=overlap_r,
-        build_meas_ctx=lambda ham_data, trial_data: cisd.build_meas_ctx(
-            ham_data, trial_data, cfg
-        ),
+        build_meas_ctx=lambda ham_data, trial_data: _build_meas_ctx_eom(ham_data, trial_data, cfg),
         kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
     )
-

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
-from jax import lax, tree_util
+from jax import lax
 from jax.sharding import NamedSharding
 
 from .core.system import System
@@ -33,7 +33,7 @@ def init_walkers(sys: System, rdm1: jax.Array, n_walkers: int) -> walkers:
                 raise ValueError(
                     "For generalized walkers, a 2D rdm1 must have shape (2*norb, 2*norb)."
                 )
-            w0 = _natorbs(rdm1, ne) + 0.0j # (2*norb, ne)
+            w0 = _natorbs(rdm1, ne) + 0.0j  # (2*norb, ne)
             return jnp.broadcast_to(w0, (n_walkers, *w0.shape))
 
         if rdm1.ndim != 3 or rdm1.shape[0] != 2:
@@ -218,9 +218,7 @@ def no_sr(
     return w, weights
 
 
-def _sr_indices(
-    weights: jax.Array, zeta: jax.Array | float, n_walkers: int
-) -> jax.Array:
+def _sr_indices(weights: jax.Array, zeta: jax.Array | float, n_walkers: int) -> jax.Array:
     cw = jnp.cumsum(jnp.abs(weights))
     tot = cw[-1]
     z = tot * (jnp.arange(n_walkers) + zeta) / n_walkers

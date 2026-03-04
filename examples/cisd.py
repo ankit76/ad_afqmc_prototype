@@ -3,7 +3,7 @@ from pyscf import cc, gto, scf
 from ad_afqmc_prototype.afqmc import AFQMC
 
 mol = gto.M(
-    atom=f"O 0 0 0; H 0 -0.757 0.587; H 0 0.757 0.587",
+    atom="O 0 0 0; H 0 -0.757 0.587; H 0 0.757 0.587",
     basis="6-31g",
     verbose=3,
 )

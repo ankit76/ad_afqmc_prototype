@@ -1,7 +1,6 @@
 import numpy as np
 
 from .. import driver, config
-from ..prep import integrals
 from ..core.system import System
 from ..ham.chol import HamChol
 from ..prop.afqmc import make_prop_ops
@@ -10,6 +9,7 @@ from ..prop.types import QmcParams
 from ..prep.pyscf_interface import get_integrals, get_gcisd, get_trial_coeff
 from ..trial.gcisd import GcisdTrial, make_gcisd_trial_ops
 from ..meas.gcisd import make_gcisd_meas_ops
+
 
 class Gcisd:
     def __init__(self, cc):
@@ -28,9 +28,7 @@ class Gcisd:
         self.trial_ops = make_gcisd_trial_ops(sys=sys)
         self.meas_ops = make_gcisd_meas_ops(sys=sys)
         self.prop_ops = make_prop_ops(ham_data.basis, sys.walker_kind)
-        self.params = QmcParams(
-            n_eql_blocks=20, n_blocks=200, seed=np.random.randint(0, int(1e6))
-        )
+        self.params = QmcParams(n_eql_blocks=20, n_blocks=200, seed=np.random.randint(0, int(1e6)))
         self.block_fn = block
         self.sys = sys
         self.ham_data = ham_data

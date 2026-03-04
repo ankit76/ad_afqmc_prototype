@@ -107,9 +107,7 @@ def test_auto_energy_matches_manual_ghf(walker_kind, norb, nup, ndn, n_chol):
 
     # Some implementations may not define energy for some walker kinds; skip in that case.
     if not meas_manual.has_kernel(k_energy):
-        pytest.skip(
-            f"manual GHF meas does not provide '{k_energy}' for walker_kind={walker_kind}"
-        )
+        pytest.skip(f"manual GHF meas does not provide '{k_energy}' for walker_kind={walker_kind}")
 
     e_manual = meas_manual.require_kernel(k_energy)
     e_auto = meas_auto.require_kernel(k_energy)

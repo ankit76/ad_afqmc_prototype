@@ -26,27 +26,20 @@ class UhfTrial:
 
     @property
     def nocc(self) -> tuple[int, int]:
-        return (
-            int(self.mo_coeff_a.shape[1]),
-            int(self.mo_coeff_b.shape[1])
-        )
+        return (int(self.mo_coeff_a.shape[1]), int(self.mo_coeff_b.shape[1]))
 
     def tree_flatten(self):
-        return (
-            self.mo_coeff_a,
-            self.mo_coeff_b
-        ), None
+        return (self.mo_coeff_a, self.mo_coeff_b), None
 
     @classmethod
     def tree_unflatten(cls, aux, children):
-        (mo_coeff_a, mo_coeff_b) = children
-        return cls(
-            mo_coeff_a=mo_coeff_a,
-            mo_coeff_b=mo_coeff_b
-        )
+        mo_coeff_a, mo_coeff_b = children
+        return cls(mo_coeff_a=mo_coeff_a, mo_coeff_b=mo_coeff_b)
+
 
 def _det(m: jax.Array) -> jax.Array:
     return jnp.linalg.det(m)
+
 
 def get_rdm1(trial_data: UhfTrial) -> jax.Array:
     cu = trial_data.mo_coeff_a
@@ -62,6 +55,7 @@ def overlap_r(walker: jax.Array, trial_data: UhfTrial) -> jax.Array:
     ou = trial_data.mo_coeff_a.conj().T @ w  # (nocc[0], nocc[0])
     od = trial_data.mo_coeff_b.conj().T @ w  # (nocc[1], nocc[1])
     return _det(ou) * _det(od)
+
 
 def overlap_u(walker: tuple[jax.Array, jax.Array], trial_data: UhfTrial) -> jax.Array:
     wu, wd = walker
@@ -217,27 +211,34 @@ def make_uhf_trial_ops(sys: System) -> TrialOps:
     if wk == "restricted":
         if sys.nup != sys.ndn:
             raise ValueError("restricted walkers require nup == ndn.")
-        return TrialOps(
-            overlap=overlap_r, 
-            get_rdm1=get_rdm1
-        )
+        overlap_fn = overlap_r
+        get_rdm1_fn = get_rdm1
+    elif wk == "unrestricted":
+        overlap_fn = overlap_u
+        get_rdm1_fn = get_rdm1
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        get_rdm1_fn = get_rdm1
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        return TrialOps(
-            overlap=overlap_u,
-            get_rdm1=get_rdm1,
-            calc_green=calc_green_u,
-            update_green=update_green,
-            calc_overlap_ratio=calc_overlap_ratio,
-        )
+    return TrialOps(
+        overlap=overlap_fn,
+        get_rdm1=get_rdm1_fn,
+    )
 
-    if wk == "generalized":
-        return TrialOps(
-            overlap=overlap_g,
-            get_rdm1=get_rdm1,
-            calc_green=calc_green_g,
-            update_green=update_green,
-            calc_overlap_ratio=calc_overlap_ratio,
-        )
 
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+def make_uhf_trial_data(data: dict, sys: System) -> UhfTrial:
+    if "mo_a" in data and "mo_b" in data:
+        mo_a = jnp.asarray(data["mo_a"])
+        mo_b = jnp.asarray(data["mo_b"])
+    elif "mo" in data:
+        mo_a = jnp.asarray(data["mo"])
+        mo_b = jnp.asarray(data["mo"])
+    else:
+        raise KeyError("Failed to find the trial coeff.")
+
+    mo_a = mo_a[:, : sys.nup]
+    mo_b = mo_b[:, : sys.ndn]
+
+    return UhfTrial(mo_a, mo_b)

@@ -11,7 +11,7 @@ from ad_afqmc_prototype.trial.uhf import UhfTrial
 from ad_afqmc_prototype.trial.ghf import GhfTrial
 from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.prop.afqmc import make_prop_ops
-from ad_afqmc_prototype.staging import _stage_ham_input, StagedMfOrCc
+from ad_afqmc_prototype.staging import StagedMfOrCc, _stage_ham_input
 
 
 def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
@@ -21,9 +21,9 @@ def rand_orthonormal_cols(key, nrow, ncol, dtype=jnp.complex128):
     k1, k2 = jax.random.split(key)
 
     if dtype in (jnp.complex128, jnp.complex64):
-        a = jax.random.normal(
-            k1, (nrow, ncol), dtype=jnp.float64
-        ) + 1.0j * jax.random.normal(k2, (nrow, ncol), dtype=jnp.float64)
+        a = jax.random.normal(k1, (nrow, ncol), dtype=jnp.float64) + 1.0j * jax.random.normal(
+            k2, (nrow, ncol), dtype=jnp.float64
+        )
     elif dtype in (jnp.float64, jnp.float32):
         a = jax.random.normal(k1, (nrow, ncol), dtype=jnp.float64)
     else:
@@ -174,9 +174,9 @@ def make_restricted_walker_near_ref(
     k1, k2 = jax.random.split(key)
     w0 = jnp.zeros((norb, nocc), dtype=jnp.complex128)
     w0 = w0.at[:nocc, :].set(jnp.eye(nocc, dtype=jnp.complex128))
-    noise = jax.random.normal(
-        k1, (norb, nocc), dtype=jnp.float64
-    ) + 1.0j * jax.random.normal(k2, (norb, nocc), dtype=jnp.float64)
+    noise = jax.random.normal(k1, (norb, nocc), dtype=jnp.float64) + 1.0j * jax.random.normal(
+        k2, (norb, nocc), dtype=jnp.float64
+    )
     w = w0 + mix * noise
     q, _ = jnp.linalg.qr(w, mode="reduced")
     return q.astype(dtype)
@@ -317,9 +317,7 @@ def make_common_pyscf(
     ham_basis: HamBasis = "restricted",
 ):
     obj = StagedMfOrCc(mf, norb_frozen=0)
-    ham_input = _stage_ham_input(
-        obj, chol_cut=1e-6, verbose=False
-    )
+    ham_input = _stage_ham_input(obj, chol_cut=1e-6, verbose=False)
     h0 = jnp.asarray(ham_input.h0)
     h1 = jnp.asarray(ham_input.h1)
     chol = jnp.asarray(ham_input.chol)

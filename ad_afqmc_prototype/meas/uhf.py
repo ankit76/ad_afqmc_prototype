@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
-from ..core.ops import MeasOps, k_energy, k_force_bias
+from ..core.ops import MeasOps, k_energy, k_force_bias, o_density_corr, o_rdm1
 from ..core.system import System
 from ..ham.chol import HamChol
 from ..ham.hubbard import HamHubbard
@@ -32,32 +32,26 @@ def _half_green_from_overlap_matrix(w: jax.Array, ovlp_mat: jax.Array) -> jax.Ar
     """
     return jnp.linalg.solve(ovlp_mat.T, w.T)
 
-def _build_bra_generalized(trial_data: UhfTrial)-> jax.Array:
+
+def _build_bra_generalized(trial_data: UhfTrial) -> jax.Array:
     Atrial = trial_data.mo_coeff_a
     Btrial = trial_data.mo_coeff_b
     bra = jnp.block([[Atrial, 0 * Btrial], [0 * Atrial, Btrial]])
     return bra
+
 
 def force_bias_kernel_rw_rh(
     walker: jax.Array,
     ham_data: HamChol,
     meas_ctx: UhfMeasCtx,
     trial_data: UhfTrial,
-) -> jax.Array: 
-    assert trial_data.nocc[0] == trial_data.nocc[1]
-    w = walker
-    mu = trial_data.mo_coeff_a.conj().T @ w
-    md = trial_data.mo_coeff_b.conj().T @ w
-    gu = _half_green_from_overlap_matrix(w, mu)  # (nocc[0], norb)
-    gd = _half_green_from_overlap_matrix(w, md)  # (nocc[1], norb)
-    
-    fb_u = jnp.einsum(
-        "gij,ij->g", meas_ctx.rot_chol_a, gu, optimize="optimal"
+) -> jax.Array:
+    n_elec_0 = trial_data.nocc[0]
+    n_elec_1 = trial_data.nocc[1]
+    return force_bias_kernel_uw_rh(
+        (walker[:, :n_elec_0], walker[:, :n_elec_1]), ham_data, meas_ctx, trial_data
     )
-    fb_d = jnp.einsum(
-        "gij,ij->g", meas_ctx.rot_chol_b, gd, optimize="optimal"
-    )
-    return fb_u + fb_d
+
 
 def force_bias_kernel_uw_rh(
     walker: tuple[jax.Array, jax.Array],
@@ -71,13 +65,10 @@ def force_bias_kernel_uw_rh(
     gu = _half_green_from_overlap_matrix(wu, mu)  # (nocc[0], norb)
     gd = _half_green_from_overlap_matrix(wd, md)  # (nocc[1], norb)
 
-    fb_u = jnp.einsum(
-        "gij,ij->g", meas_ctx.rot_chol_a, gu, optimize="optimal"
-    )
-    fb_d = jnp.einsum(
-        "gij,ij->g", meas_ctx.rot_chol_b, gd, optimize="optimal"
-    )
+    fb_u = jnp.einsum("gij,ij->g", meas_ctx.rot_chol_a, gu, optimize="optimal")
+    fb_d = jnp.einsum("gij,ij->g", meas_ctx.rot_chol_b, gd, optimize="optimal")
     return fb_u + fb_d
+
 
 def force_bias_kernel_gw_rh(
     walker: jax.Array,
@@ -87,21 +78,129 @@ def force_bias_kernel_gw_rh(
 ) -> jax.Array:
     w = walker
     norb = trial_data.norb
-    na, nb = trial_data.nocc
+    na, _ = trial_data.nocc
 
     bra = _build_bra_generalized(trial_data)
     g = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
 
     g_aa, g_bb = g[:na, :norb], g[na:, norb:]
-    g_ab, g_ba = g[:na, norb:], g[na:, :norb]
 
     rot_chol_aa = meas_ctx.rot_chol_a
     rot_chol_bb = meas_ctx.rot_chol_b
 
-    fb  = jnp.einsum("gij,ij->g", rot_chol_aa, g_aa, optimize="optimal")
+    fb = jnp.einsum("gij,ij->g", rot_chol_aa, g_aa, optimize="optimal")
     fb += jnp.einsum("gij,ij->g", rot_chol_bb, g_bb, optimize="optimal")
 
     return fb
+
+
+def rdm1_kernel_rw(
+    walker: jax.Array,
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    n_elec_0 = trial_data.nocc[0]
+    n_elec_1 = trial_data.nocc[1]
+    return rdm1_kernel_uw(
+        (walker[:, :n_elec_0], walker[:, :n_elec_1]), ham_data, meas_ctx, trial_data
+    )
+
+
+def rdm1_kernel_uw(
+    walker: tuple[jax.Array, jax.Array],
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    wu, wd = walker
+    mu = trial_data.mo_coeff_a.conj().T @ wu
+    md = trial_data.mo_coeff_b.conj().T @ wd
+    gu = _half_green_from_overlap_matrix(wu, mu)
+    gd = _half_green_from_overlap_matrix(wd, md)
+    dm_a = gu.T @ trial_data.mo_coeff_a.conj().T
+    dm_b = gd.T @ trial_data.mo_coeff_b.conj().T
+    return jnp.stack([dm_a, dm_b], axis=0)
+
+
+def rdm1_kernel_gw(
+    walker: jax.Array,
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    w = walker
+    norb = trial_data.norb
+    na, _ = trial_data.nocc
+    bra = _build_bra_generalized(trial_data)
+    g = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
+    dm_a = g[:na, :norb].T @ trial_data.mo_coeff_a.conj().T
+    dm_b = g[na:, norb:].T @ trial_data.mo_coeff_b.conj().T
+    return jnp.stack([dm_a, dm_b], axis=0)
+
+
+def _density_corr_from_greens(ga: jax.Array, gb: jax.Array) -> jax.Array:
+    """
+    Density correlation from spin-resolved Green's functions ga (norb, norb)
+    and gb (norb, norb). Returns (3, norb, norb) array of uu, ud, dd correlations.
+    """
+    na = jnp.diagonal(ga)
+    nb = jnp.diagonal(gb)
+
+    # same-spin: n_i n_j = G_ii G_jj - G_ij G_ji + delta_ij G_ii
+    uu = na[:, None] * na[None, :] - ga * ga.T + jnp.diag(na)
+    dd = nb[:, None] * nb[None, :] - gb * gb.T + jnp.diag(nb)
+
+    # opposite-spin: n_ia n_jb = G^a_ii G^b_jj  (no exchange)
+    ud = na[:, None] * nb[None, :]
+
+    return jnp.stack([uu, ud, dd], axis=0)
+
+
+def density_corr_kernel_uw(
+    walker: tuple[jax.Array, jax.Array],
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    wu, wd = walker
+    mu = trial_data.mo_coeff_a.conj().T @ wu
+    md = trial_data.mo_coeff_b.conj().T @ wd
+    gu = _half_green_from_overlap_matrix(wu, mu)
+    gd = _half_green_from_overlap_matrix(wd, md)
+    ga = gu.T @ trial_data.mo_coeff_a.conj().T
+    gb = gd.T @ trial_data.mo_coeff_b.conj().T
+    return _density_corr_from_greens(ga, gb)
+
+
+def density_corr_kernel_rw(
+    walker: jax.Array,
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    n_elec_0 = trial_data.nocc[0]
+    n_elec_1 = trial_data.nocc[1]
+    return density_corr_kernel_uw(
+        (walker[:, :n_elec_0], walker[:, :n_elec_1]), ham_data, meas_ctx, trial_data
+    )
+
+
+def density_corr_kernel_gw(
+    walker: jax.Array,
+    ham_data: Any,
+    meas_ctx: UhfMeasCtx,
+    trial_data: UhfTrial,
+) -> jax.Array:
+    w = walker
+    norb = trial_data.norb
+    na, _ = trial_data.nocc
+    bra = _build_bra_generalized(trial_data)
+    g = _half_green_from_overlap_matrix(w, bra.T.conj() @ w)
+    ga = g[:na, :norb].T @ trial_data.mo_coeff_a.conj().T
+    gb = g[na:, norb:].T @ trial_data.mo_coeff_b.conj().T
+    return _density_corr_from_greens(ga, gb)
+
 
 def energy_kernel_rw_rh(
     walker: jax.Array,
@@ -109,35 +208,12 @@ def energy_kernel_rw_rh(
     meas_ctx: UhfMeasCtx,
     trial_data: UhfTrial,
 ) -> jax.Array:
-    assert trial_data.nocc[0] == trial_data.nocc[1]
-    w = walker
-    mu = trial_data.mo_coeff_a.conj().T @ w
-    md = trial_data.mo_coeff_b.conj().T @ w
-    gu = _half_green_from_overlap_matrix(w, mu)
-    gd = _half_green_from_overlap_matrix(w, md)
-
-    e0 = ham_data.h0
-    e1 = (
-        jnp.sum(gu * meas_ctx.rot_h1_a)
-        + jnp.sum(gd * meas_ctx.rot_h1_b)
+    n_elec_0 = trial_data.nocc[0]
+    n_elec_1 = trial_data.nocc[1]
+    return energy_kernel_uw_rh(
+        (walker[:, :n_elec_0], walker[:, :n_elec_1]), ham_data, meas_ctx, trial_data
     )
 
-    f_up = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_a, gu.T, optimize="optimal")
-    f_dn = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_b, gd.T, optimize="optimal")
-    c_up = jax.vmap(jnp.trace)(f_up)
-    c_dn = jax.vmap(jnp.trace)(f_dn)
-    exc_up = jnp.sum(jax.vmap(lambda x: x * x.T)(f_up))
-    exc_dn = jnp.sum(jax.vmap(lambda x: x * x.T)(f_dn))
-
-    e2 = (
-        jnp.sum(c_up * c_up)
-        + jnp.sum(c_dn * c_dn)
-        + 2.0 * jnp.sum(c_up * c_dn)
-        - exc_up
-        - exc_dn
-    ) / 2.0
-
-    return e0 + e1 + e2
 
 def energy_kernel_uw_rh(
     walker: tuple[jax.Array, jax.Array],
@@ -152,10 +228,7 @@ def energy_kernel_uw_rh(
     gd = _half_green_from_overlap_matrix(wd, md)
 
     e0 = ham_data.h0
-    e1 = (
-        jnp.sum(gu * meas_ctx.rot_h1_a)
-        + jnp.sum(gd * meas_ctx.rot_h1_b)
-    )
+    e1 = jnp.sum(gu * meas_ctx.rot_h1_a) + jnp.sum(gd * meas_ctx.rot_h1_b)
 
     f_up = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_a, gu.T, optimize="optimal")
     f_dn = jnp.einsum("gij,jk->gik", meas_ctx.rot_chol_b, gd.T, optimize="optimal")
@@ -165,14 +238,11 @@ def energy_kernel_uw_rh(
     exc_dn = jnp.sum(jax.vmap(lambda x: x * x.T)(f_dn))
 
     e2 = (
-        jnp.sum(c_up * c_up)
-        + jnp.sum(c_dn * c_dn)
-        + 2.0 * jnp.sum(c_up * c_dn)
-        - exc_up
-        - exc_dn
+        jnp.sum(c_up * c_up) + jnp.sum(c_dn * c_dn) + 2.0 * jnp.sum(c_up * c_dn) - exc_up - exc_dn
     ) / 2.0
 
     return e0 + e1 + e2
+
 
 def energy_kernel_gw_rh(
     walker: jax.Array,
@@ -208,16 +278,14 @@ def energy_kernel_gw_rh(
     c_dn = jax.vmap(jnp.trace)(f_dn)
     J = jnp.sum(c_up * c_up) + jnp.sum(c_dn * c_dn) + 2.0 * jnp.sum(c_up * c_dn)
 
-    K = (
-        jnp.sum(jax.vmap(lambda x: x * x.T)(f_up))
-        + jnp.sum(jax.vmap(lambda x: x * x.T)(f_dn))
-    )
+    K = jnp.sum(jax.vmap(lambda x: x * x.T)(f_up)) + jnp.sum(jax.vmap(lambda x: x * x.T)(f_dn))
 
     f_ab = jnp.einsum("gip,pj->gij", rot_chol_a, g_ba.T, optimize="optimal")
     f_ba = jnp.einsum("gip,pj->gij", rot_chol_b, g_ab.T, optimize="optimal")
     K += 2.0 * jnp.sum(jax.vmap(lambda x, y: x * y.T)(f_ab, f_ba))
 
     return e0 + e1 + (J - K) / 2.0
+
 
 @tree_util.register_pytree_node_class
 @dataclass(frozen=True)
@@ -293,27 +361,46 @@ def build_meas_ctx_chol(ham_data: HamChol, trial_data: UhfTrial) -> UhfCholMeasC
 def make_uhf_meas_ops_chol(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
     if wk == "restricted":
-        return MeasOps(
-            overlap=overlap_r,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_rw_rh, k_energy: energy_kernel_rw_rh},
-        )
+        overlap_fn = overlap_r
+        build_meas_ctx_fn = build_meas_ctx
+        kernels = {
+            k_force_bias: force_bias_kernel_rw_rh,
+            k_energy: energy_kernel_rw_rh,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_rw,
+            o_density_corr: density_corr_kernel_rw,
+        }
+    elif wk == "unrestricted":
+        overlap_fn = overlap_u
+        build_meas_ctx_fn = build_meas_ctx
+        kernels = {
+            k_force_bias: force_bias_kernel_uw_rh,
+            k_energy: energy_kernel_uw_rh,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_uw,
+            o_density_corr: density_corr_kernel_uw,
+        }
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        build_meas_ctx_fn = build_meas_ctx
+        kernels = {
+            k_force_bias: force_bias_kernel_gw_rh, 
+            k_energy: energy_kernel_gw_rh,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_gw,
+            o_density_corr: density_corr_kernel_gw,
+        }
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
-    if wk == "unrestricted":
-        return MeasOps(
-            overlap=overlap_u,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_uw_rh, k_energy: energy_kernel_uw_rh},
-        )
-
-    if wk == "generalized":
-        return MeasOps(
-            overlap=overlap_g,
-            build_meas_ctx=build_meas_ctx_chol,
-            kernels={k_force_bias: force_bias_kernel_gw_rh, k_energy: energy_kernel_gw_rh},
-        )
-
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+    return MeasOps(
+        overlap=overlap_fn,
+        build_meas_ctx=build_meas_ctx_fn,
+        kernels=kernels,
+        observables=observables,
 
 
 # ---------------------
@@ -365,19 +452,32 @@ def make_uhf_meas_ops_hubbard(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
 
     if wk == "unrestricted":
-        return MeasOps(
-            overlap=overlap_u,
-            kernels={k_energy: energy_kernel_uw_hubbard},
+        overlap_fn = overlap_u
+        kernels = {
+            k_energy: energy_kernel_uw_hubbard,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_uw,
+            o_density_corr: density_corr_kernel_uw,
+        }
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        kernels = {
+            k_energy: energy_kernel_gw_hubbard,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_gw,
+            o_density_corr: density_corr_kernel_gw,
+        }
+    else:
+        raise ValueError(
+            f"Hubbard UHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
         )
 
-    if wk == "generalized":
-        return MeasOps(
-            overlap=overlap_g,
-            kernels={k_energy: energy_kernel_gw_hubbard},
-        )
-
-    raise ValueError(
-        f"Hubbard UHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+    return MeasOps(
+        overlap=overlap_fn,
+        kernels=kernels,
+        observables=observables,
     )
 
 
@@ -446,17 +546,29 @@ def make_uhf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
     wk = sys.walker_kind.lower()
 
     if wk == "unrestricted":
-        return MeasOps(
-            overlap=overlap_u,
-            kernels={k_energy: energy_kernel_uw_hubbard_nn},
-        )
+        overlap_fn = overlap_u
+        kernels = {
+            k_energy: energy_kernel_uw_hubbard_nn,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_uw,
+            o_density_corr: density_corr_kernel_uw,
+        }
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        kernels = {
+            k_energy: energy_kernel_gw_hubbard_nn,
+        }
+        observables = {
+            o_rdm1: rdm1_kernel_gw,
+            o_density_corr: density_corr_kernel_gw,
+        }
+    else:
+        raise ValueError(
+            f"Nearest-neighbor Hubbard UHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
 
-    if wk == "generalized":
-        return MeasOps(
-            overlap=overlap_g,
-            kernels={k_energy: energy_kernel_gw_hubbard_nn},
-        )
-
-    raise ValueError(
-        f"Nearest-neighbor Hubbard UHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+    return MeasOps(
+        overlap=overlap_fn,
+        kernels=kernels,
+        observables=observables,
     )

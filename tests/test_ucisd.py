@@ -23,7 +23,6 @@ from ad_afqmc_prototype.meas.ucisd import (
     force_bias_kernel_uw_rh,
     make_ucisd_meas_ops,
 )
-from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.trial.ucisd import UcisdTrial, make_ucisd_trial_ops
 
@@ -128,8 +127,8 @@ def test_auto_force_bias_matches_manual_ucisd(walker_kind, norb, nup, ndn, n_cho
         make_meas_ops_fn=make_ucisd_meas_ops,
     )
 
-    e_manual = meas_manual.require_kernel(k_energy)
-    e_auto = meas_auto.require_kernel(k_energy)
+    meas_manual.require_kernel(k_energy)
+    meas_auto.require_kernel(k_energy)
     fb_manual = meas_manual.require_kernel(k_force_bias)
     fb_auto = meas_auto.require_kernel(k_force_bias)
 

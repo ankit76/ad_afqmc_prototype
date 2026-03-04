@@ -25,6 +25,7 @@ class UcisdTrial:
       c2ab: (nocc[0], nvir[0], nocc[1], nvir[1])    doubles coefficients c_{i,alpha a,alpha j,beta  b,beta }
       c2bb: (nocc[1], nvir[1], nocc[1], nvir[1])    doubles coefficients c_{i,beta  a,beta  j,beta  b,beta }
     """
+
     mo_coeff_a: jax.Array
     mo_coeff_b: jax.Array
     c1a: jax.Array
@@ -39,17 +40,11 @@ class UcisdTrial:
 
     @property
     def nocc(self) -> tuple[int, int]:
-        return (
-            int(self.c1a.shape[0]),
-            int(self.c1b.shape[0])
-        )
+        return (int(self.c1a.shape[0]), int(self.c1b.shape[0]))
 
     @property
     def nvir(self) -> tuple[int, int]:
-        return (
-            int(self.c1a.shape[1]),
-            int(self.c1b.shape[1])
-        )
+        return (int(self.c1a.shape[1]), int(self.c1b.shape[1]))
 
     def tree_flatten(self):
         return (
@@ -75,7 +70,7 @@ class UcisdTrial:
         ) = children
         return cls(
             mo_coeff_a=mo_coeff_a,
-            mo_coeff_b=mo_coeff_b, 
+            mo_coeff_b=mo_coeff_b,
             c1a=c1a,
             c1b=c1b,
             c2aa=c2aa,
@@ -83,16 +78,18 @@ class UcisdTrial:
             c2bb=c2bb,
         )
 
+
 def _det(m: jax.Array) -> jax.Array:
     return jnp.linalg.det(m)
+
 
 def get_rdm1(trial_data: UcisdTrial) -> jax.Array:
     # UHF
     norb, (n_oa, n_ob) = trial_data.norb, trial_data.nocc
     occ_a = jnp.arange(norb) < n_oa
     c_b = trial_data.mo_coeff_b
-    dm_a = jnp.diag(occ_a)     # (norb, norb)
-    dm_b = c_b[:,:n_ob] @ c_b[:,:n_ob].conj().T  # (norb, norb)
+    dm_a = jnp.diag(occ_a)  # (norb, norb)
+    dm_b = c_b[:, :n_ob] @ c_b[:, :n_ob].conj().T  # (norb, norb)
     return jnp.stack([dm_a, dm_b], axis=0)  # (2, norb, norb)
 
 
@@ -141,15 +138,14 @@ def overlap_g(walker: jax.Array, trial_data: UcisdTrial) -> jax.Array:
     c_a = trial_data.mo_coeff_a
     c_b = trial_data.mo_coeff_b
 
-    noccA, ci1A, ci2AA = n_oa, c1a, c2aa
+    _, ci1A, ci2AA = n_oa, c1a, c2aa
     noccB, ci1B, ci2BB = n_ob, c1b, c2bb
     ci2AB = c2ab
-    nelec = (n_oa, n_ob)
 
     w = jnp.vstack(
         [
-            walker[: norb],
-            c_b.T @ walker[norb :, :],
+            walker[:norb],
+            c_b.T @ walker[norb:, :],
         ]
     )  # put walker_dn in the basis of alpha reference
 
@@ -173,12 +169,14 @@ def overlap_g(walker: jax.Array, trial_data: UcisdTrial) -> jax.Array:
     g = (w @ jnp.linalg.inv(bra.T.conj() @ w) @ bra.T.conj()).T
 
     g_aa = g[:n_oa, n_oa:norb]
-    g_bb = g[norb:norb + n_ob, norb + n_ob:]
-    g_ab = g[:n_oa, norb + n_ob:]
-    g_ba = g[norb:norb + n_ob, n_oa:norb]
+    g_bb = g[norb : norb + n_ob, norb + n_ob :]
+    g_ab = g[:n_oa, norb + n_ob :]
+    g_ba = g[norb : norb + n_ob, n_oa:norb]
 
     o1 = jnp.einsum("ia,ia", ci1A, g_aa) + jnp.einsum(
-        "ia,ia", ci1B, g_bb,
+        "ia,ia",
+        ci1B,
+        g_bb,
     )
 
     # AA
@@ -198,12 +196,29 @@ def make_ucisd_trial_ops(sys: System) -> TrialOps:
     wk = sys.walker_kind.lower()
 
     if wk == "restricted":
-        return TrialOps(overlap=overlap_r, get_rdm1=get_rdm1)
+        overlap_fn = overlap_r
+        get_rdm1_fn = get_rdm1
+    elif wk == "unrestricted":
+        overlap_fn = overlap_u
+        get_rdm1_fn = get_rdm1
+    elif wk == "generalized":
+        overlap_fn = overlap_g
+        get_rdm1_fn = get_rdm1
+    else:
+        raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+    return TrialOps(
+        overlap=overlap_fn,
+        get_rdm1=get_rdm1_fn,
+    )
 
-    if wk == "unrestricted":
-        return TrialOps(overlap=overlap_u, get_rdm1=get_rdm1)
 
-    if wk == "generalized":
-        return TrialOps(overlap=overlap_g, get_rdm1=get_rdm1)
-
-    raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
+def make_ucisd_trial_data(data: dict, sys: System) -> UcisdTrial:
+    return UcisdTrial(
+        mo_coeff_a=jnp.asarray(data["mo_coeff_a"]),
+        mo_coeff_b=jnp.asarray(data["mo_coeff_b"]),
+        c1a=jnp.asarray(data["ci1a"]),
+        c1b=jnp.asarray(data["ci1b"]),
+        c2aa=jnp.asarray(data["ci2aa"]),
+        c2ab=jnp.asarray(data["ci2ab"]),
+        c2bb=jnp.asarray(data["ci2bb"]),
+    )

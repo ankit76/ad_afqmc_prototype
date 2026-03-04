@@ -12,13 +12,9 @@ from pyscf import cc, gto, scf
 from ad_afqmc_prototype import testing
 from ad_afqmc_prototype.afqmc import AFQMC
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.cisd import make_cisd_meas_ops
 
 # from ad_afqmc_prototype.prep.pyscf_interface import get_cisd
-from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.trial.cisd import CisdTrial, make_cisd_trial_ops
 
@@ -51,9 +47,7 @@ def _make_cisd_trial(
     return CisdTrial(ci1=ci1, ci2=ci2)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol,memory_mode", [(8, 3, 10, "low"), (10, 4, 12, "high")]
-)
+@pytest.mark.parametrize("norb,nocc,n_chol,memory_mode", [(8, 3, 10, "low"), (10, 4, 12, "high")])
 def test_auto_force_bias_matches_manual_cisd(norb, nocc, n_chol, memory_mode):
     walker_kind = "restricted"
     key = jax.random.PRNGKey(123)
@@ -99,9 +93,7 @@ def test_auto_force_bias_matches_manual_cisd(norb, nocc, n_chol, memory_mode):
         assert jnp.allclose(v_a, v_m, rtol=2e-5, atol=2e-6), (v_a, v_m)
 
 
-@pytest.mark.parametrize(
-    "norb,nocc,n_chol,memory_mode", [(8, 3, 10, "low"), (10, 4, 12, "high")]
-)
+@pytest.mark.parametrize("norb,nocc,n_chol,memory_mode", [(8, 3, 10, "low"), (10, 4, 12, "high")])
 def test_auto_energy_matches_manual_cisd(norb, nocc, n_chol, memory_mode):
     walker_kind = "restricted"
     key = jax.random.PRNGKey(456)

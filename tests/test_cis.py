@@ -2,7 +2,6 @@ from ad_afqmc_prototype import config
 
 config.configure_once()
 
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -10,9 +9,6 @@ import pytest
 
 from ad_afqmc_prototype import testing
 from ad_afqmc_prototype.core.ops import k_energy, k_force_bias
-from ad_afqmc_prototype.core.system import System
-from ad_afqmc_prototype.ham.chol import HamChol
-from ad_afqmc_prototype.meas.auto import make_auto_meas_ops
 from ad_afqmc_prototype.meas.cis import make_cis_meas_ops
 from ad_afqmc_prototype.trial.cis import CisTrial, make_cis_trial_ops
 

@@ -49,9 +49,7 @@ def n_fields(ham: HamChol) -> int:
     return int(ham.chol.shape[0])
 
 
-def slice_ham_level(
-    ham: HamChol, *, norb_keep: int | None, nchol_keep: int | None
-) -> HamChol:
+def slice_ham_level(ham: HamChol, *, norb_keep: int | None, nchol_keep: int | None) -> HamChol:
     """
     Build a HamChol view for measurement in MLMC:
       - slice orbitals as a prefix [:norb_keep]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Any, Literal
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -63,6 +62,7 @@ def overlap_r(walker: jax.Array, trial_data: CisTrial) -> jax.Array:
     o0 = jnp.linalg.det(walker[:nocc, :]) ** 2
     o1 = jnp.einsum("ia,ia", ci1, g[:, nocc:])
     return 2 * o1 * o0
+
 
 def make_cis_trial_ops(sys: System) -> TrialOps:
     if sys.nup != sys.ndn:
