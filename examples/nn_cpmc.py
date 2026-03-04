@@ -22,7 +22,7 @@ n_elec = (2, 2)
 u = 4.0
 v = 1.0
 
-#lattice = lattices.TriangularGrid(3, 3, boundary="pbc")
+#lattice = lattices.TriangularGrid(2, 2, boundary="pbc")
 #adj = lattice.create_adjacency_matrix()
 #bonds = lattice.get_neighboring_bonds(adj)
 #n_sites = lattice.n_sites
