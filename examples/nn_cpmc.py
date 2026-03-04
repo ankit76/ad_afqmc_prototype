@@ -13,13 +13,12 @@ from ad_afqmc_prototype.meas import ghf as ghf_meas
 from ad_afqmc_prototype.meas import multi_ghf as multi_ghf_meas
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.prop.nn_cpmc import make_prop_ops
-# from ad_afqmc_prototype.prop.cpmc_slow import make_prop_ops
 from ad_afqmc_prototype.driver import run_qmc_energy
 from ad_afqmc_prototype.prop.blocks import block
 
 # -----------------------------------------------------------------------------
 # create lattice
-n_elec = (3, 3)
+n_elec = (2, 2)
 u = 4.0
 v = 1.0
 
@@ -28,7 +27,7 @@ v = 1.0
 #bonds = lattice.get_neighboring_bonds(adj)
 #n_sites = lattice.n_sites
 
-n_sites = 6
+n_sites = 4
 lattice = lattices.OneDimensionalChain(n_sites)
 adj = lattice.create_adjacency_matrix()
 bonds = lattice.get_all_neighboring_bonds(adj)
@@ -121,7 +120,12 @@ multi_ghf_meas_ops = multi_ghf_meas.make_multi_ghf_meas_ops_hubbard_nn(sys=sys)
 
 # -----------------------------------------------------------------------------
 # propagation operations
-params = QmcParams(n_walkers=100, n_eql_blocks=50, n_blocks=500, seed=42)
+params = QmcParams(
+    n_walkers=200, 
+    n_eql_blocks=100, 
+    n_blocks=500, 
+    seed=42
+)
 prop_ops = make_prop_ops(ham_data, sys.walker_kind, trial_ops=ghf_trial_ops)
 #prop_ops = make_prop_ops(ham_data, sys.walker_kind, trial_ops=multi_ghf_trial_ops)
 

@@ -219,19 +219,19 @@ def make_ghf_trial_ops(sys: System) -> TrialOps:
         if sys.nup != sys.ndn:
             raise ValueError("restricted walkers require nup == ndn.")
         overlap_fn = overlap_r
-        get_rdm1_fn = get_rdm1_block_diag
+        get_rdm1_fn = get_rdm1_u
         calc_green_fn = None
         update_green_fn = None
         calc_overlap_ratio_fn = None
     elif wk == "unrestricted":
         overlap_fn = overlap_u
-        get_rdm1_fn = get_rdm1_block_diag
+        get_rdm1_fn = get_rdm1_u
         calc_green_fn = calc_green_u
         update_green_fn = update_green
         calc_overlap_ratio_fn = calc_overlap_ratio
-    if wk == "generalized":
+    elif wk == "generalized":
         overlap_fn = overlap_g
-        get_rdm1_fn = get_rdm1_generalized
+        get_rdm1_fn = get_rdm1_g
         calc_green_fn = calc_green_g
         update_green_fn = update_green
         calc_overlap_ratio_fn = calc_overlap_ratio

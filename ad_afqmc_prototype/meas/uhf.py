@@ -401,6 +401,7 @@ def make_uhf_meas_ops_chol(sys: System) -> MeasOps:
         build_meas_ctx=build_meas_ctx_fn,
         kernels=kernels,
         observables=observables,
+    )
 
 
 # ---------------------
@@ -566,6 +567,7 @@ def make_uhf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
     else:
         raise ValueError(
             f"Nearest-neighbor Hubbard UHF meas only implemented for unrestricted/generalized, got walker_kind={sys.walker_kind}"
+        )
 
     return MeasOps(
         overlap=overlap_fn,

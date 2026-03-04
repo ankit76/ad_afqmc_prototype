@@ -213,18 +213,30 @@ def make_uhf_trial_ops(sys: System) -> TrialOps:
             raise ValueError("restricted walkers require nup == ndn.")
         overlap_fn = overlap_r
         get_rdm1_fn = get_rdm1
+        calc_green_fn = None
+        update_green_fn = None
+        calc_overlap_ratio_fn = None
     elif wk == "unrestricted":
         overlap_fn = overlap_u
         get_rdm1_fn = get_rdm1
+        calc_green_fn = calc_green_u
+        update_green_fn = update_green
+        calc_overlap_ratio_fn = calc_overlap_ratio
     elif wk == "generalized":
         overlap_fn = overlap_g
         get_rdm1_fn = get_rdm1
+        calc_green_fn = calc_green_g
+        update_green_fn = update_green
+        calc_overlap_ratio_fn = calc_overlap_ratio
     else:
         raise ValueError(f"unknown walker_kind: {sys.walker_kind}")
 
     return TrialOps(
         overlap=overlap_fn,
         get_rdm1=get_rdm1_fn,
+        calc_green=calc_green_fn,
+        update_green=update_green_fn,
+        calc_overlap_ratio=calc_overlap_ratio_fn,
     )
 
 
