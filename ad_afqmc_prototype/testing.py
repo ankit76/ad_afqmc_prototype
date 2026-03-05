@@ -82,7 +82,7 @@ def make_random_ham_hubbard(
     k1, k2 = jax.random.split(key, 2)
     a = jax.random.normal(k1, (norb, norb), dtype=dtype)
     h1 = 0.5 * (a + a.T)
-    u = jax.random.normal(k2, (), dtype=dtype)
+    u = 100.0 * jax.random.uniform(k2, (), dtype=dtype)
     return HamHubbard(h1=h1, u=u)
 
 
@@ -110,8 +110,8 @@ def make_random_ham_hubbard_nn(
     k1, k2, k3, k4 = jax.random.split(key, 4)
     a = jax.random.normal(k1, (norb, norb), dtype=dtype)
     h1 = 0.5 * (a + a.T)
-    u = jax.random.normal(k2, (), dtype=dtype)
-    v = jax.random.normal(k3, (), dtype=dtype)
+    u = 100.0 * jax.random.uniform(k2, (), dtype=dtype)
+    v = u * jax.random.uniform(k3, (), dtype=dtype)
     bonds = random_unique_bonds(k4, norb=norb, n_bonds=n_bonds)
     return HamHubbardNN(h1=h1, u=u, v=v, bonds=bonds)
 

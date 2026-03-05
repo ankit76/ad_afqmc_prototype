@@ -22,14 +22,10 @@ from ad_afqmc_prototype.prop.nn_cpmc import make_prop_ops
 from ad_afqmc_prototype.prop.types import QmcParams
 from ad_afqmc_prototype.prop.blocks import block
 from ad_afqmc_prototype.driver import run_qmc_energy
-from ad_afqmc_prototype.testing import (
-    make_walkers,
-    make_random_ghf_trial,
-    make_common_hubbard_nn,
-    run_calc,
-)
+from ad_afqmc_prototype.testing import run_calc
 from testing import make_hubbard_nn_integrals
 
+dtype = jnp.float64 # Must be real for CPMC.
 
 def mf():
     nx, ny = 4, 4

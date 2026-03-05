@@ -71,11 +71,11 @@ dm_init /= 2.0
 
 mf.kernel(dm_init)
 mo1 = mf.stability()
-gmf = mf.newton().run(mo1, mf.mo_occ)
+mf = mf.newton().run(mo1, mf.mo_occ)
 mo1 = mf.stability()
-gmf = mf.newton().run(mo1, mf.mo_occ)
+mf = mf.newton().run(mo1, mf.mo_occ)
 mo1 = mf.stability()
-gmf = mf.newton().run(mo1, mf.mo_occ)
+mf = mf.newton().run(mo1, mf.mo_occ)
 mo1 = mf.stability()
 
 if sum(n_elec) <= 12:
@@ -102,11 +102,11 @@ sys = System(
 )
 ham_data = HamHubbardNN(h1=jnp.array(h1), u=u, v=v, bonds=jnp.array(bonds))
 
-gmf_coeffs = mf.mo_coeff[:, : sum(n_elec)]
-ghf_trial_data = ghf_trial.GhfTrial(gmf_coeffs)
+mf_coeffs = mf.mo_coeff[:, : sum(n_elec)]
+ghf_trial_data = ghf_trial.GhfTrial(mf_coeffs)
 multi_ghf_trial_data = multi_ghf_trial.MultiGhfTrial(
     ci_coeffs=jnp.array([1.0]),
-    mo_coeffs=jnp.array([gmf_coeffs]),
+    mo_coeffs=jnp.array([mf_coeffs]),
     green_complex_dtype=jnp.complex64,
     green_real_dtype=jnp.float32,
 )

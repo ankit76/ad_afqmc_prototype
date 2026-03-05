@@ -142,7 +142,11 @@ def _update_full_rank2(
     term_i = u1 * (Gij * s_j - Gjj * s_i) - s_i
     term_j = u0 * (Gji * s_i - Gii * s_j) - s_j
 
-    G_new = G + (u0 / r_safe) * jnp.outer(col_i, term_i) + (u1 / r_safe) * jnp.outer(col_j, term_j)
+    G_new = (
+        G
+        + (u0 / r_safe) * jnp.outer(col_i, term_i)
+        + (u1 / r_safe) * jnp.outer(col_j, term_j)
+    )
 
     if sanitize:
         z = jnp.asarray(0.0, dtype=G_new.dtype)

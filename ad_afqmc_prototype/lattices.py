@@ -585,7 +585,7 @@ class TriangularGrid(Lattice):
                         h[j, i] = 1
         return h
 
-    def get_neel_guess(self, angle=0.0):
+    def get_neel_guess(self, angle=0.0, dtype=complex):
         boundary = self.boundary
         sites_0 = []
         sites_1 = []
@@ -618,7 +618,7 @@ class TriangularGrid(Lattice):
         spinor_1_dm = np.outer(spinor_1, spinor_1.conj())
         spinor_2 = spinor(-theta + angle, 0)
         spinor_2_dm = np.outer(spinor_2, spinor_2.conj())
-        dm = np.zeros((2 * self.n_sites, 2 * self.n_sites), dtype=complex)
+        dm = np.zeros((2 * self.n_sites, 2 * self.n_sites), dtype=dtype)
 
         def put_block(i, rho):
             dm[i, i] = rho[0, 0]
@@ -682,7 +682,7 @@ class TriangularGrid(Lattice):
 
         return dm
 
-    def get_square_guess(self, angle=0.0):
+    def get_square_guess(self, angle=0.0, dtype=complex):
         sites_up = []
         sites_dn = []
 
@@ -706,7 +706,7 @@ class TriangularGrid(Lattice):
         rho_up = np.outer(x_up, x_up.conj())
         rho_dn = np.outer(x_dn, x_dn.conj())
 
-        dm = np.zeros((2 * self.n_sites, 2 * self.n_sites), dtype=complex)
+        dm = np.zeros((2 * self.n_sites, 2 * self.n_sites), dtype=dtype)
 
         def put_block(i, rho):
             dm[i, i] = rho[0, 0]

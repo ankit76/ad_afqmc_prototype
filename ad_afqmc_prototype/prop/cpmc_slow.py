@@ -56,14 +56,14 @@ def cpmc_step(
     # constrained-path weight update via real overlap ratio
     ratio = jnp.real(overlaps / state.overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
-    node_encounters_step = jnp.sum(ratio <= 0.0)
+    node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = state.weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
     # two body: scan over sites
     n_sites = cpmc_ops.n_sites()
-    key, subkey = jax.random.split(state.rng_key)
     hs = prop_ctx.hs_constant  # (2,2)
+    key, subkey, _ = jax.random.split(state.rng_key, 3) # to be consistent with nn_cpmc
     uniform_rns = jax.random.uniform(subkey, (nw, n_sites)) # uniform HS fields
     
     def scanned_fun(carry, x):
@@ -92,20 +92,20 @@ def cpmc_step(
         ov0 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
             w0, trial_data
         )
-        r0 = ov0 / overlaps
-        r0 = jnp.where(r0 <= w_floor, 0.0, r0)
+        r0 = jnp.real(ov0 / overlaps)
+        r0 = jnp.where(r0 <= w_floor, 0.0, r0) # constraint
         node_encounters += jnp.sum(r0 <= 0.0)
 
         ov1 = wk.vmap_chunked(meas_ops.overlap, params.n_chunks, in_axes=(0, None))(
             w1, trial_data
         )
-        r1 = ov1 / overlaps
-        r1 = jnp.where(r1 <= w_floor, 0.0, r1)
+        r1 = jnp.real(ov1 / overlaps)
+        r1 = jnp.where(r1 <= w_floor, 0.0, r1) # constraint
         node_encounters += jnp.sum(r1 <= 0.0)
 
         # normalize probabilities
-        p0 = 0.5 * r0.real
-        p1 = 0.5 * r1.real
+        p0 = 0.5 * r0
+        p1 = 0.5 * r1
         norm = p0 + p1 + 1.0e-13
         p0 = p0 / norm
 
@@ -145,6 +145,7 @@ def cpmc_step(
     node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
+    weights = jnp.where(jnp.isnan(weights), 0.0, weights)
 
     # population control factor and shift update
     weights = weights * jnp.exp(prop_ctx.dt * state.pop_control_ene_shift)
@@ -192,7 +193,7 @@ def make_prop_ops(ham_data: HamHubbard, walker_kind: str) -> PropOps:
         trial_data: Any,
         params: QmcParams,
     ) -> HubbardCpmcCtx:
-        return _build_prop_ctx(ham_data, params.dt)
+        return _build_prop_ctx(ham_data, params.dt, walker_kind)
 
     return PropOps(
         init_prop_state=init_prop_state,

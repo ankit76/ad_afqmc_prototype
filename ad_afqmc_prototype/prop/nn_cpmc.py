@@ -111,10 +111,9 @@ def cpmc_step(
         sites, 
         hs,
         w_floor,
-        tol=1.0e-8
     ):
         walkers, overlaps, weights, greens, node_encounters = carry
-        update_indices = jnp.column_stack((spins, sites))
+        upd_indices = jnp.vstack((spins, sites)).T
 
         # field 0 ratio
         upd0 = hs[0] - 1.0
@@ -122,9 +121,12 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, update_indices, upd0)
+        )(greens, upd_indices, upd0).real
         r0 = jnp.where(r0 <= w_floor, 0.0, r0)
-        node_encounters = node_encounters + jnp.sum(r0 <= 0.0)
+        node_encounters += jnp.sum(r0 <= 0.0)
+        
+        #if spins[0] == spins[1]:
+        #    jax.debug.print('r0 = {x}', x=r0)
 
         # field 1 ratio
         upd1 = hs[1] - 1.0
@@ -132,20 +134,20 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, update_indices, upd1)
+        )(greens, upd_indices, upd1).real
         r1 = jnp.where(r1 <= w_floor, 0.0, r1)
-        node_encounters = node_encounters + jnp.sum(r1 <= 0.0)
+        node_encounters += jnp.sum(r1 <= 0.0)
 
         # probabilities
-        p0 = 0.5 * r0.real
-        p1 = 0.5 * r1.real
+        p0 = 0.5 * r0
+        p1 = 0.5 * r1
         norm = p0 + p1 + 1.0e-13
         p0 = p0 / norm
 
         choose0 = rns < p0  # (nw,)
 
         # apply chosen HS constants to walker
-        upd_constants = jnp.where( # (nw, 2) for lambda_{\pm}
+        c = jnp.where( # (nw, 2) for lambda_{\pm}
             choose0.reshape(-1, 1),
             hs[0], # field 0
             hs[1], # field 1
@@ -161,28 +163,28 @@ def cpmc_step(
                 w_up = (
                     w_up
                     .at[:, site_i, :]
-                    .mul(upd_constants[:, 0].reshape(-1, 1)) # lambda_{+}
+                    .mul(c[:, 0].reshape(-1, 1)) # lambda_{+}
                 )
 
             else:
                 w_dn = (
                     w_dn
                     .at[:, site_i, :]
-                    .mul(upd_constants[:, 0].reshape(-1, 1)) # lambda_{+}
+                    .mul(c[:, 0].reshape(-1, 1)) # lambda_{+}
                 )
 
             if spin_j == 0:
                 w_up = (
                     w_up
                     .at[:, site_j, :]
-                    .mul(upd_constants[:, 1].reshape(-1, 1)) # lambda_{-}
+                    .mul(c[:, 1].reshape(-1, 1)) # lambda_{-}
                 )
 
             else:
                 w_dn = (
                     w_dn
                     .at[:, site_j, :]
-                    .mul(upd_constants[:, 1].reshape(-1, 1)) # lambda_{-}
+                    .mul(c[:, 1].reshape(-1, 1)) # lambda_{-}
                 )
 
             walkers = (w_up, w_dn)
@@ -192,28 +194,28 @@ def cpmc_step(
                 walkers = (
                     walkers
                     .at[:, site_i, :]
-                    .mul(upd_constants[:, 0].reshape(-1, 1)) # lambda_{+}
+                    .mul(c[:, 0].reshape(-1, 1)) # lambda_{+}
                 )
 
             else:
                 walkers = (
                     walkers
                     .at[:, site_i+n_sites, :]
-                    .mul(upd_constants[:, 0].reshape(-1, 1)) # lambda_{+}
+                    .mul(c[:, 0].reshape(-1, 1)) # lambda_{+}
                 )
 
             if spin_j == 0:
                 walkers = (
                     walkers
                     .at[:, site_j, :]
-                    .mul(upd_constants[:, 1].reshape(-1, 1)) # lambda_{-}
+                    .mul(c[:, 1].reshape(-1, 1)) # lambda_{-}
                 )
 
             else:
                 walkers = (
                     walkers
                     .at[:, site_j+n_sites, :]
-                    .mul(upd_constants[:, 1].reshape(-1, 1)) # lambda_{-}
+                    .mul(c[:, 1].reshape(-1, 1)) # lambda_{-}
                 )
 
         # update overlap and weights
@@ -222,11 +224,12 @@ def cpmc_step(
         weights = weights * norm
 
         # fast greens update
+        upd_constants = c - 1.0  # (nw, 2)
         greens = wk.vmap_chunked(
             green_ops.update_green,
             n_chunks=params.n_chunks,
             in_axes=(0, None, 0)
-        )(greens, update_indices, upd_constants)
+        )(greens, upd_indices, upd_constants)
 
         return (walkers, overlaps, weights, greens, node_encounters)
         
@@ -250,7 +253,7 @@ def cpmc_step(
     )(walkers, trial_data)
     ratio = jnp.real(overlaps / state.overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
-    node_encounters_step = node_encounters_step + jnp.sum(ratio <= 0.0)
+    node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = state.weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
@@ -354,7 +357,7 @@ def cpmc_step(
     )
     ratio = jnp.real(overlaps_new / overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
-    node_encounters_step = node_encounters_step + jnp.sum(ratio <= 0.0)
+    node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 

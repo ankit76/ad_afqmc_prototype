@@ -114,7 +114,6 @@ def cpmc_step(
     w_cap = float(getattr(params, "weight_cap", 100.0))
     damping = float(getattr(params, "pop_control_damping", 0.1))
 
-
     # one body half step (1)
     walkers = wk.vmap_chunked(
         cpmc_ops.apply_one_body_half, params.n_chunks, in_axes=(0, None)
@@ -124,7 +123,7 @@ def cpmc_step(
     )(walkers, trial_data)
     ratio = jnp.real(overlaps / state.overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio) # constraint
-    node_encounters_step = node_encounters_step + jnp.sum(ratio <= 0.0)
+    node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = state.weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 
@@ -136,7 +135,7 @@ def cpmc_step(
     # two body: scan over sites
     n_sites = cpmc_ops.n_sites()
     hs = prop_ctx.hs_constant  # (2,2)
-    key, subkey = jax.random.split(state.rng_key)
+    key, subkey, _ = jax.random.split(state.rng_key, 3) # to be consistent with nn_cpmc
     uniform_rns = jax.random.uniform(subkey, (nw, n_sites)) # uniform HS fields
 
     def scanned_fun(carry, x):
@@ -149,9 +148,9 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, upd_indices, upd0)
+        )(greens, upd_indices, upd0).real
         r0 = jnp.where(r0 <= w_floor, 0.0, r0) # constraint
-        node_encounters = node_encounters + jnp.sum(r0 <= 0.0)
+        node_encounters += jnp.sum(r0 <= 0.0)
 
         # field 1 ratio
         upd1 = hs[1] - 1.0
@@ -159,13 +158,13 @@ def cpmc_step(
             green_ops.calc_overlap_ratio,
             n_chunks=params.n_chunks,
             in_axes=(0, None, None),
-        )(greens, upd_indices, upd1)
+        )(greens, upd_indices, upd1).real
         r1 = jnp.where(r1 <= w_floor, 0.0, r1) # constraint
-        node_encounters = node_encounters + jnp.sum(r1 <= 0.0)
+        node_encounters += jnp.sum(r1 <= 0.0)
         
         # probabilities
-        p0 = 0.5 * r0.real
-        p1 = 0.5 * r1.real
+        p0 = 0.5 * r0
+        p1 = 0.5 * r1
         norm = p0 + p1 + 1.0e-13
         p0 = p0 / norm
 
@@ -213,7 +212,7 @@ def cpmc_step(
     )(walkers, trial_data)
     ratio = jnp.real(overlaps_new / overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio) # constraint
-    node_encounters_step = node_encounters_step + jnp.sum(ratio <= 0.0)
+    node_encounters_step += jnp.sum(ratio <= 0.0)
     weights = weights * ratio
     weights = jnp.where(weights > w_cap, 0.0, weights)
 

@@ -33,6 +33,7 @@ from ad_afqmc_prototype.testing import (
 )
 from testing import make_hubbard_integrals
 
+dtype = jnp.float64 # Must be real for CPMC.
 
 def test_energy_equal_when_wg_eq_wu():
     norb, nup, ndn = 6, 2, 1
@@ -55,11 +56,12 @@ def test_energy_equal_when_wg_eq_wu():
             norb=norb,
             nup=nup,
             ndn=ndn,
+            dtype=dtype,
         ),
     )
 
     for i in range(4):
-        wi = make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = make_walkers(jax.random.fold_in(k_w, i), sys, dtype=dtype)
         wi = cast(tuple, wi)
         eu = energy_kernel_uw_hubbard(wi, ham, None, trial)
         wa, wb = wi
@@ -107,7 +109,7 @@ mf_input = mf()  # type: ignore
 @pytest.mark.parametrize(
     "mf_input, walker_kind, e_ref, err_ref",
     [
-        (mf_input, "unrestricted", -4.682277, None),
+        (mf_input, "unrestricted", -5.0225679542, None),
     ],
 )
 def test_calc_hubbard(mf_input, params, walker_kind, e_ref, err_ref):
@@ -165,3 +167,12 @@ def params():
 if __name__ == "__main__":
     pytest.main([__file__])
 
+    #params = QmcParams(
+    #    dt=0.005,
+    #    n_eql_blocks=5,
+    #    n_blocks=5,
+    #    seed=42,
+    #    n_walkers=10,
+    #    weight_floor=1e-8
+    #)
+    #test_calc_hubbard(mf_input, params, "unrestricted", -5.0225679542,  None)

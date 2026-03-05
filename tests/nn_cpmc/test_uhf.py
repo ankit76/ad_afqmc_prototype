@@ -34,6 +34,7 @@ from ad_afqmc_prototype.testing import (
 )
 from testing import make_hubbard_nn_integrals
 
+dtype = jnp.float64 # Must be real for CPMC.
 
 def test_energy_equal_when_wg_eq_wu():
     norb, n_bonds, nup, ndn = 6, 3, 2, 1
@@ -57,11 +58,12 @@ def test_energy_equal_when_wg_eq_wu():
             norb=norb,
             nup=nup,
             ndn=ndn,
+            dtype=dtype,
         ),
     )
 
     for i in range(4):
-        wi = make_walkers(jax.random.fold_in(k_w, i), sys)
+        wi = make_walkers(jax.random.fold_in(k_w, i), sys, dtype=dtype)
         wi = cast(tuple, wi)
         eu = energy_kernel_uw_hubbard_nn(wi, ham, None, trial)
         wa, wb = wi
@@ -171,3 +173,5 @@ def params():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+    #test_energy_equal_when_wg_eq_wu()

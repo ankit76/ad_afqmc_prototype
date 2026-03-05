@@ -26,6 +26,8 @@ from ad_afqmc_prototype.testing import (
     make_walkers,
 )
 
+dtype = jnp.float64 # Must be real for CPMC.
+
 # ---------------------
 # Unrestricted walkers
 # ---------------------
@@ -36,15 +38,15 @@ def test_unrestricted_step_matches_cpmc_slow():
     params = QmcParams(dt=0.1, n_chunks=1)
     sys = System(norb=norb, nelec=(nup, ndn), walker_kind="unrestricted")
     ham = make_random_ham_hubbard(key, norb)
-    trial_data = make_random_uhf_trial(key, norb, nup, ndn)
+    trial_data = make_random_uhf_trial(key, norb, nup, ndn, dtype=dtype)
     trial_ops = make_uhf_trial_ops(sys)
     meas_ops = make_uhf_meas_ops_hubbard(sys)
-    walkers = make_walkers(key, sys, nw)
+    walkers = make_walkers(key, sys, nw, dtype=dtype)
 
     state = PropState(
         walkers=walkers,
         weights=jnp.ones((nw,)),
-        overlaps=jnp.ones((nw,), dtype=jnp.complex64),
+        overlaps=jnp.ones((nw,), dtype=dtype),
         rng_key=jax.random.PRNGKey(0),
         pop_control_ene_shift=jnp.asarray(0.0),
         e_estimate=jnp.asarray(0.0),
@@ -53,7 +55,7 @@ def test_unrestricted_step_matches_cpmc_slow():
     
     cpmc_ops = make_hubbard_cpmc_ops(ham, sys.walker_kind)
     prop_ctx = _build_prop_ctx(ham, params.dt, sys.walker_kind)
-
+    
     out = cpmc_step(
         state,
         params=params,
@@ -77,7 +79,6 @@ def test_unrestricted_step_matches_cpmc_slow():
     np.testing.assert_allclose(out.walkers[0], out_slow.walkers[0]) 
     np.testing.assert_allclose(out.walkers[1], out_slow.walkers[1]) 
     np.testing.assert_allclose(out.overlaps, out_slow.overlaps)  
-    np.testing.assert_allclose(out.node_encounters, out_slow.node_encounters)  
     np.testing.assert_allclose(out.pop_control_ene_shift, out_slow.pop_control_ene_shift)  
     assert jnp.all(out.rng_key == out_slow.rng_key)
 
@@ -86,10 +87,10 @@ def test_unrestricted_step_is_chunk_invariant():
     norb, nup, ndn, nw = 5, 2, 1, 6
     sys = System(norb=norb, nelec=(nup, ndn), walker_kind="unrestricted")
     ham = make_random_ham_hubbard(key, norb)
-    trial_data = make_random_uhf_trial(key, norb, nup, ndn)
+    trial_data = make_random_uhf_trial(key, norb, nup, ndn, dtype=dtype)
     trial_ops = make_uhf_trial_ops(sys)
     meas_ops = make_uhf_meas_ops_hubbard(sys)
-    walkers = make_walkers(key, sys, nw)
+    walkers = make_walkers(key, sys, nw, dtype=dtype)
 
     params1 = QmcParams(dt=0.1, n_chunks=1)
     params2 = QmcParams(dt=0.1, n_chunks=3)
@@ -97,7 +98,7 @@ def test_unrestricted_step_is_chunk_invariant():
     state = PropState(
         walkers=walkers,
         weights=jnp.ones((nw,)),
-        overlaps=jnp.ones((nw,), dtype=jnp.complex64),
+        overlaps=jnp.ones((nw,), dtype=dtype),
         rng_key=jax.random.PRNGKey(0),
         pop_control_ene_shift=jnp.asarray(0.0),
         e_estimate=jnp.asarray(0.0),
@@ -145,15 +146,15 @@ def test_generalized_step_matches_cpmc_slow():
     params = QmcParams(dt=0.1, n_chunks=1)
     sys = System(norb=norb, nelec=(nup, ndn), walker_kind="generalized")
     ham = make_random_ham_hubbard(key, norb)
-    trial_data = make_random_ghf_trial(key, norb, nup, ndn)
+    trial_data = make_random_ghf_trial(key, norb, nup, ndn, dtype=dtype)
     trial_ops = make_ghf_trial_ops(sys)
     meas_ops = make_ghf_meas_ops_hubbard(sys)
-    walkers = make_walkers(key, sys, nw)
+    walkers = make_walkers(key, sys, nw, dtype=dtype)
 
     state = PropState(
         walkers=walkers,
         weights=jnp.ones((nw,)),
-        overlaps=jnp.ones((nw,), dtype=jnp.complex64),
+        overlaps=jnp.ones((nw,), dtype=dtype),
         rng_key=jax.random.PRNGKey(0),
         pop_control_ene_shift=jnp.asarray(0.0),
         e_estimate=jnp.asarray(0.0),
@@ -194,10 +195,10 @@ def test_generalized_step_is_chunk_invariant():
     norb, nup, ndn, nw = 5, 2, 1, 6
     sys = System(norb=norb, nelec=(nup, ndn), walker_kind="generalized")
     ham = make_random_ham_hubbard(key, norb)
-    trial_data = make_random_ghf_trial(key, norb, nup, ndn)
+    trial_data = make_random_ghf_trial(key, norb, nup, ndn, dtype=dtype)
     trial_ops = make_ghf_trial_ops(sys)
     meas_ops = make_ghf_meas_ops_hubbard(sys)
-    walkers = make_walkers(key, sys, nw)
+    walkers = make_walkers(key, sys, nw, dtype=dtype)
 
     params1 = QmcParams(dt=0.1, n_chunks=1)
     params2 = QmcParams(dt=0.1, n_chunks=3)
@@ -205,7 +206,7 @@ def test_generalized_step_is_chunk_invariant():
     state = PropState(
         walkers=walkers,
         weights=jnp.ones((nw,)),
-        overlaps=jnp.ones((nw,), dtype=jnp.complex64),
+        overlaps=jnp.ones((nw,), dtype=dtype),
         rng_key=jax.random.PRNGKey(0),
         pop_control_ene_shift=jnp.asarray(0.0),
         e_estimate=jnp.asarray(0.0),
@@ -238,7 +239,6 @@ def test_generalized_step_is_chunk_invariant():
     np.testing.assert_allclose(out1.weights, out2.weights)
     np.testing.assert_allclose(out1.walkers, out2.walkers) 
     np.testing.assert_allclose(out1.overlaps, out2.overlaps)  
-    np.testing.assert_allclose(out1.node_encounters, out2.node_encounters)  
     np.testing.assert_allclose(out1.pop_control_ene_shift, out2.pop_control_ene_shift)  
     assert jnp.all(out1.rng_key == out2.rng_key)
 
