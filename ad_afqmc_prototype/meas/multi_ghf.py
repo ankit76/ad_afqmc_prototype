@@ -248,6 +248,10 @@ def make_multi_ghf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
         return MeasOps(
             overlap=real_overlap_u,
             kernels={k_energy: energy_kernel_uw_hubbard_nn},
+            observables={
+                o_rdm1: rdm1_kernel_uw,
+                o_density_corr: density_corr_kernel_uw,
+            },
         )
 
     if wk == "generalized":
@@ -259,6 +263,10 @@ def make_multi_ghf_meas_ops_hubbard_nn(sys: System) -> MeasOps:
         return MeasOps(
             overlap=real_overlap_g,
             kernels={k_energy: energy_kernel_gw_hubbard_nn},
+            observables={
+                o_rdm1: rdm1_kernel_gw,
+                o_density_corr: density_corr_kernel_gw,
+            },
         )
 
     raise ValueError(

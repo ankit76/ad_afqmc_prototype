@@ -199,6 +199,49 @@ def get_energy_hubbard(
     return energy_1 + energy_2 + enuc
 
 
+def get_energy_hubbard_nn(
+    bra: jnp.ndarray,
+    ket: jnp.ndarray,
+    h1: jnp.ndarray,
+    bonds: jnp.ndarray,
+    u: float,
+    v: float,
+    enuc: float = 0.0,
+) -> jnp.ndarray:
+    """Return the mixed estimator <bra|H|ket>/<bra|ket> for a pair of determinants."""
+    norb = h1[0].shape[0]
+    green = _mixed_green(bra, ket)
+
+    g_uu = green[:norb, :norb]
+    g_dd = green[norb:, norb:]
+    g_ud = green[:norb, norb:]
+    g_du = green[norb:, :norb]
+    
+    energy_1 = jnp.sum(g_uu * h1[0]) + jnp.sum(g_dd * h1[1])
+    
+    # on-site interactions
+    energy_2 = u * (
+        jnp.sum(green[:norb, :norb].diagonal() * green[norb:, norb:].diagonal())
+        - jnp.sum(green[:norb, norb:].diagonal() * green[norb:, :norb].diagonal())
+    )
+    energy_2 = u * (
+        jnp.sum(jnp.diagonal(g_uu) * jnp.diagonal(g_dd)) 
+        - jnp.sum(jnp.diagonal(g_ud) * jnp.diagonal(g_du))
+    )
+
+    # nearest-neighbor interacions
+    i = bonds[:, 0] 
+    j = bonds[:, 1] 
+    g_charge = jnp.diagonal(g_uu) + jnp.diagonal(g_dd)
+    hartree = g_charge[i] * g_charge[j]
+    exchange = (
+            g_uu[i, j] * g_uu[j, i] + g_ud[i, j] * g_du[j, i]
+            + g_du[i, j] * g_ud[j, i] + g_dd[i, j] * g_dd[j, i]
+    )
+    energy_2 += v * jnp.sum(hartree - exchange)
+    return energy_1 + energy_2 + enuc
+
+
 class hamiltonian:
     """Abstract Hamiltonian interface."""
 
@@ -247,6 +290,27 @@ class hubbard_hamiltonian(hamiltonian):
         self, bra: jnp.ndarray, ket: jnp.ndarray, context: dict | None = None
     ) -> jnp.ndarray:
         return get_energy_hubbard(bra, ket, self.h1, self.u, self.enuc)
+
+
+@dataclass
+class hubbard_nn_hamiltonian(hamiltonian):
+    """
+    Hubbard Hamiltonian with on-site interaction U and nearest-neighbour
+    interaction V.
+    """
+
+    h1: jnp.ndarray
+    bonds: jnp.ndarray
+    u: float
+    v: float
+    enuc: float = 0.0
+
+    def mixed_energy(
+        self, bra: jnp.ndarray, ket: jnp.ndarray, context: dict | None = None
+    ) -> jnp.ndarray:
+        return get_energy_hubbard_nn(
+            bra, ket, self.h1, self.bonds, self.u, self.v, self.enuc
+        )
 
 
 def _spin_rot_elements(alpha: float, beta: float, gamma: float) -> tuple[jnp.ndarray, ...]:

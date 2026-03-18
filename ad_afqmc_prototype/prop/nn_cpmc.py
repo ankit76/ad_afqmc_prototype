@@ -115,6 +115,8 @@ def cpmc_step(
         walkers, overlaps, weights, greens, node_encounters = carry
         upd_indices = jnp.vstack((spins, sites)).T
 
+        jax.debug.print('\ninput overlaps.dtype = {x}', x=overlaps.dtype)
+
         # field 0 ratio
         upd0 = hs[0] - 1.0
         r0 = wk.vmap_chunked(
@@ -125,9 +127,6 @@ def cpmc_step(
         r0 = jnp.where(r0 <= w_floor, 0.0, r0)
         node_encounters += jnp.sum(r0 <= 0.0)
         
-        #if spins[0] == spins[1]:
-        #    jax.debug.print('r0 = {x}', x=r0)
-
         # field 1 ratio
         upd1 = hs[1] - 1.0
         r1 = wk.vmap_chunked(
@@ -230,6 +229,8 @@ def cpmc_step(
             n_chunks=params.n_chunks,
             in_axes=(0, None, 0)
         )(greens, upd_indices, upd_constants)
+        
+        jax.debug.print('\noutput overlaps.dtype = {x}', x=overlaps.dtype)
 
         return (walkers, overlaps, weights, greens, node_encounters)
         
