@@ -55,6 +55,7 @@ def init_prop_state(
         n_chunks=params.n_chunks,
         in_axes=(0, None),
     )(initial_walkers, trial_data)
+    overlaps = jnp.real(overlaps)
 
     e_est = None
     if initial_e_estimate is not None:
@@ -114,8 +115,6 @@ def cpmc_step(
     ):
         walkers, overlaps, weights, greens, node_encounters = carry
         upd_indices = jnp.vstack((spins, sites)).T
-
-        jax.debug.print('\ninput overlaps.dtype = {x}', x=overlaps.dtype)
 
         # field 0 ratio
         upd0 = hs[0] - 1.0
@@ -230,8 +229,6 @@ def cpmc_step(
             in_axes=(0, None, 0)
         )(greens, upd_indices, upd_constants)
         
-        jax.debug.print('\noutput overlaps.dtype = {x}', x=overlaps.dtype)
-
         return (walkers, overlaps, weights, greens, node_encounters)
         
     green_ops = require_cpmc_trial_ops(trial_ops)
@@ -252,6 +249,7 @@ def cpmc_step(
     overlaps = wk.vmap_chunked(
         meas_ops.overlap, n_chunks=params.n_chunks, in_axes=(0, None)
     )(walkers, trial_data)
+    overlaps = jnp.real(overlaps)
     ratio = jnp.real(overlaps / state.overlaps)
     ratio = jnp.where(ratio <= w_floor, 0.0, ratio)
     node_encounters_step += jnp.sum(ratio <= 0.0)

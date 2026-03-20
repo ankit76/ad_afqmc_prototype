@@ -58,7 +58,7 @@ def mf():
     mf.get_hcore = lambda *args: integrals["h1"]
     mf.get_ovlp = lambda *args: np.eye(n_sites)
     mf._eri = ao2mo.restore(8, integrals["h2"], n_sites)
-    dm0 = lattice.get_neel_guess()
+    dm0 = lattice.get_neel_guess().real
     dm0 = [dm0[:n_sites, :n_sites], dm0[n_sites:, n_sites:]]
     mf.kernel(dm0)
     return mf, integrals
