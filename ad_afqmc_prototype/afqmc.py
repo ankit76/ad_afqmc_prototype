@@ -471,3 +471,112 @@ class AfqmcFp(Afqmc):
 # Backward-compatible aliases
 AFQMC = Afqmc
 AFQMCFp = AfqmcFp
+
+
+class AfqmcPt2Ccsd(Afqmc):
+    def __init__(
+        self,
+        mf_or_cc: Any,
+        *,
+        norb_frozen: int | None = None,
+        chol_cut: float = 1e-5,
+        cache: Union[str, Path] | None = None,
+        n_eql_blocks: int | None = None,
+        n_blocks: int | None = None,
+        seed: int | None = None,
+        dt: float | None = None,
+        n_walkers: int | None = None,
+        n_chunks: int | None = None,
+    ):
+
+        from pyscf.cc.ccsd import CCSD
+
+        assert isinstance(mf_or_cc, CCSD)
+
+        super().__init__(
+            mf_or_cc,
+            norb_frozen=norb_frozen,
+            chol_cut=chol_cut,
+            cache=cache,
+            n_eql_blocks=n_eql_blocks,
+            n_blocks=n_blocks,
+            seed=seed,
+            dt=dt,
+            n_walkers=n_walkers,
+            n_chunks=n_chunks,
+        )
+
+    def kernel(self):
+        from ad_afqmc_prototype.core.system import System
+        from ad_afqmc_prototype.driver import run_mixed_qmc
+        from ad_afqmc_prototype.ham.chol import HamChol
+        from ad_afqmc_prototype.meas.pt2ccsd import make_pt2ccsd_meas_ops
+        from ad_afqmc_prototype.meas.rhf import make_rhf_meas_ops
+        from ad_afqmc_prototype.prop.afqmc import make_prop_ops
+        from ad_afqmc_prototype.prop.blocks import block_mixed
+        from ad_afqmc_prototype.prop.types import QmcParams
+        from ad_afqmc_prototype.staging import StagedMfOrCc, _stage_pt2ccsd_input, stage
+        from ad_afqmc_prototype.trial.pt2ccsd import Pt2ccsdTrial
+        from ad_afqmc_prototype.trial.rhf import RhfTrial, make_rhf_trial_ops
+
+        import jax.numpy as jnp
+
+        staged_guide = stage(self._scf)
+        ham = staged_guide.ham
+        sys = System(norb=int(ham.norb), nelec=ham.nelec, walker_kind="restricted")
+
+        ham_data = HamChol(
+            jnp.array(ham.h0),
+            jnp.array(ham.h1),
+            jnp.array(ham.chol),
+            basis=ham.basis,
+        )
+
+        guide_data = RhfTrial(
+            mo_coeff=jnp.array(staged_guide.trial.data["mo"][:, : sys.nup]),
+        )
+
+        trial_obj = StagedMfOrCc(self._cc, norb_frozen=None)
+        staged_trial = _stage_pt2ccsd_input(trial_obj)
+
+        trial_data = Pt2ccsdTrial(
+            mo_t=jnp.asarray(staged_trial.data["mo_t"]),
+            t2=jnp.asarray(staged_trial.data["t2"]),
+        )
+
+        guide_ops = make_rhf_trial_ops(sys)
+        guide_meas_ops = make_rhf_meas_ops(sys)
+        guide_prop_ops = make_prop_ops(ham_data.basis, sys.walker_kind)
+        trial_meas_ops = make_pt2ccsd_meas_ops(sys, mixed_precision=False)
+
+        params = self._make_params()
+        assert isinstance(params, QmcParams)
+
+        print(f"\ndt={params.dt}  n_walkers={params.n_walkers}  n_prop_steps={params.n_prop_steps}")
+        print(
+            f"Equilibration imaginary time : {params.n_eql_blocks * params.n_prop_steps * params.dt:.2f} a.u."
+        )
+        print(
+            f"Sampling imaginary time      : {params.n_blocks    * params.n_prop_steps * params.dt:.2f} a.u.\n"
+        )
+
+        mixed_samples = run_mixed_qmc(
+            sys=sys,
+            params=params,
+            ham_data=ham_data,
+            guide_data=guide_data,
+            guide_ops=guide_ops,
+            guide_prop_ops=guide_prop_ops,
+            guide_meas_ops=guide_meas_ops,
+            trial_data=trial_data,
+            trial_meas_ops=trial_meas_ops,
+            mix_block_fn=block_mixed,
+        )
+
+        print(
+            f"\nGuide  (AFQMC/RHF)    : {mixed_samples.guide_mean_energy.real:.6f} +/- {mixed_samples.guide_stderr_energy.real:.6f} Ha"
+        )
+        print(
+            f"Trial  (AFQMC/pt2CCSD): {mixed_samples.trial_mean_energy.real:.6f} +/- {mixed_samples.trial_stderr_energy.real:.6f} Ha"
+        )
+        print(f"Reference (CCSD)       : {self._cc.e_tot:.6f} Ha")
