@@ -230,6 +230,10 @@ def update_green(
         in_axes=(0, 0),
     )(G_states, r_k)
 
+    complex_zero = jnp.array(0.0 + 0.0j, dtype=G_new.dtype)
+    G_new = jnp.array(jnp.where(jnp.isinf(G_new), complex_zero, G_new))
+    G_new = jnp.array(jnp.where(jnp.isnan(G_new), complex_zero, G_new))
+
     w_new = w_states * r_k
     return {"G": G_new, "w": w_new}
 
@@ -355,7 +359,6 @@ def _rotate_spin_trial(mo: jax.Array, *, norb: int, beta: jax.Array, alpha: jax.
     b = -s * cu + c * cd
     return jnp.concatenate([a, b], axis=0)
 
-
 def _build_pg_s2_expansion(
     mo_pg: jax.Array,  # (n_pg, 2*norb, ne)
     ci_pg: jax.Array,  # (n_pg,)
@@ -417,7 +420,6 @@ EnergyFn = Callable[
     jax.Array,
 ]
 
-
 def build_multi_ghf_expansion(
     *,
     mo0: jax.Array,  # (2*norb, nelec_tot)
@@ -429,6 +431,7 @@ def build_multi_ghf_expansion(
     n_alpha: int | None = None,
     n_beta: int | None = None,
     auto_grid: bool = False,
+    s2_projection: bool = False,
     k_projection: bool = False,
     k_parity: int = 1,
     # optional convergence selection
@@ -475,60 +478,64 @@ def build_multi_ghf_expansion(
     else:
         mo_pg = mo0[None, ...]
         ci_pg = jnp.asarray([1.0 + 0.0j])
+    
+    if s2_projection:
+        # choose / auto select (alpha, beta) grid
+        if test_walker is None and (rdm1 is not None):
+            test_walker = _rdm1_to_test_walker(rdm1[0], rdm1[1], nelec=nelec)
 
-    # choose / auto select (alpha, beta) grid
-    if test_walker is None and (rdm1 is not None):
-        test_walker = _rdm1_to_test_walker(rdm1[0], rdm1[1], nelec=nelec)
+        if auto_grid:
+            if ham_data is None or test_walker is None or energy_fn is None:
+                raise ValueError(
+                    "auto_grid=True requires ham_data, test_walker (or rdm1), and energy_fn."
+                )
+            print("Auto-selecting (alpha, beta) grid via energy convergence...")
+            wu, wd = test_walker
 
-    if auto_grid:
-        if ham_data is None or test_walker is None or energy_fn is None:
-            raise ValueError(
-                "auto_grid=True requires ham_data, test_walker (or rdm1), and energy_fn."
+            Es: list[float] = []
+            grids: list[tuple[tuple[jax.Array, float], tuple[jax.Array, jax.Array]]] = []
+
+            for n_alpha, n_beta in candidate_grids:
+                a = _make_alpha_grid(n_alpha)
+                b = _make_beta_grid(n_beta)
+                mo_coeffs_tmp, ci_tmp = _build_pg_s2_expansion(mo_pg, ci_pg, a, b, norb=norb)
+                if k_projection:
+                    mo_coeffs_tmp, ci_tmp = _apply_k_projection(mo_coeffs_tmp, ci_tmp, parity=k_parity)
+
+                E = energy_fn((wu, wd), ham_data, mo_coeffs_tmp, ci_tmp)
+                Es.append(float(E))
+                grids.append((a, b))
+                print(f"(n_alpha={n_alpha}, n_beta={n_beta}) -> E = {float(E):.8f}")
+
+            E_ref = Es[-1]
+            best = len(Es) - 1
+            for k, Ek in enumerate(Es):
+                if abs(Ek - E_ref) < energy_tol:
+                    best = k
+                    break
+
+            alpha = grids[best][0]
+            beta = grids[best][1]
+            print(
+                f"Selected (n_alpha={alpha[0].shape[0]}, n_beta={beta[0].shape[0]}) with E = {Es[best]:.8f}"
             )
-        print("Auto-selecting (alpha, beta) grid via energy convergence...")
-        wu, wd = test_walker
 
-        Es: list[float] = []
-        grids: list[tuple[tuple[jax.Array, float], tuple[jax.Array, jax.Array]]] = []
+        if alpha is None:
+            if n_alpha is not None:
+                alpha = _make_alpha_grid(n_alpha)
+            else:
+                alpha = _make_alpha_grid(5)
+        if beta is None:
+            if n_beta is not None:
+                beta = _make_beta_grid(n_beta)
+            else:
+                beta = _make_beta_grid(8)
+        print(f"Using (n_alpha={alpha[0].shape[0]}, n_beta={beta[0].shape[0]}) grid.")
+        # build PG × S^2 expansion
+        mo_coeffs, ci_coeffs = _build_pg_s2_expansion(mo_pg, ci_pg, alpha, beta, norb=norb)
 
-        for n_alpha, n_beta in candidate_grids:
-            a = _make_alpha_grid(n_alpha)
-            b = _make_beta_grid(n_beta)
-            mo_coeffs_tmp, ci_tmp = _build_pg_s2_expansion(mo_pg, ci_pg, a, b, norb=norb)
-            if k_projection:
-                mo_coeffs_tmp, ci_tmp = _apply_k_projection(mo_coeffs_tmp, ci_tmp, parity=k_parity)
-
-            E = energy_fn((wu, wd), ham_data, mo_coeffs_tmp, ci_tmp)
-            Es.append(float(E))
-            grids.append((a, b))
-            print(f"(n_alpha={n_alpha}, n_beta={n_beta}) -> E = {float(E):.8f}")
-
-        E_ref = Es[-1]
-        best = len(Es) - 1
-        for k, Ek in enumerate(Es):
-            if abs(Ek - E_ref) < energy_tol:
-                best = k
-                break
-
-        alpha = grids[best][0]
-        beta = grids[best][1]
-        print(
-            f"Selected (n_alpha={alpha[0].shape[0]}, n_beta={beta[0].shape[0]}) with E = {Es[best]:.8f}"
-        )
-
-    if alpha is None:
-        if n_alpha is not None:
-            alpha = _make_alpha_grid(n_alpha)
-        else:
-            alpha = _make_alpha_grid(5)
-    if beta is None:
-        if n_beta is not None:
-            beta = _make_beta_grid(n_beta)
-        else:
-            beta = _make_beta_grid(8)
-    print(f"Using (n_alpha={alpha[0].shape[0]}, n_beta={beta[0].shape[0]}) grid.")
-    # build PG × S^2 expansion
-    mo_coeffs, ci_coeffs = _build_pg_s2_expansion(mo_pg, ci_pg, alpha, beta, norb=norb)
+    else:
+        mo_coeffs, ci_coeffs = mo_pg, ci_pg
 
     # k projection
     if k_projection:

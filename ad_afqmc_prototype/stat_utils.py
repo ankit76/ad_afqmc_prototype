@@ -48,15 +48,19 @@ def _pick_plateau(
             return int(Bs2[i]), float(SEs2[i]), int(Gs2[i])
     
     # If no flat window was found, fall back to "near-maximum" SE:
+    finite = np.isfinite(SEs2)
+    if not np.any(finite):
+        return int(Bs[0]), float(SEs[0]), int(Gs[0])
+
     # 1) Find maximum SE among eligible points
-    jmax = int(np.argmax(SEs2))
+    jmax = int(np.where(finite, SEs2, -np.inf).argmax())
 
     # 2) Define a threshold slightly below the max (95% of max by default)
     thresh = 0.95 * SEs2[jmax]
 
     # 3) Pick the earliest B where SE crosses that threshold
-    #    (earliest = smaller B = more blocks = typically lower variance in SE estimate)
-    j = int(np.where(SEs2 >= thresh)[0][0])
+    candidates = np.where(SEs2 >= thresh)[0]
+    j = int(candidates[0]) if candidates.size > 0 else jmax
     return int(Bs2[j]), float(SEs2[j]), int(Gs2[j])
 
 
